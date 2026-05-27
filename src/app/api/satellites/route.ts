@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
 const SOURCES = [
     { url: "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=tle", type: "active" },
@@ -28,6 +28,6 @@ export async function GET() {
         .map(r => (r as PromiseFulfilledResult<{ data: string; type: string }>).value);
 
     return NextResponse.json(payloads, {
-        headers: { 'Cache-Control': 's-maxage=300' } // cache 5 min on Vercel edge
+        headers: { 'Cache-Control': 's-maxage=300' }
     });
 }

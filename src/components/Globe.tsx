@@ -6,7 +6,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Component, ReactNode, useState, useEffect, useRef } from 'react';
 import { Viewer as CesiumViewer, Cartesian3, Color, ScreenSpaceEventType, HeadingPitchRange, Math as CesiumMath } from "cesium";
 import { CesiumComponentRef, Viewer, Entity, ScreenSpaceEventHandler, ScreenSpaceEvent, EllipseGraphics, PointGraphics } from "resium";
-import { a } from "framer-motion/client";
 
 class CesiumErrorBoundary extends Component<{
   children: ReactNode;
@@ -594,13 +593,28 @@ export default function Globe() {
                         setSelectedSat(sat);
                         setFlyoverPanelOpen(false);
                         if (viewerRef.current?.cesiumElement) {
-                          const target = viewerRef.current.cesiumElement.entities.getById(sat.id);
-                          if (target) {
-                            viewerRef.current.cesiumElement.flyTo(target, {
-                              duration: 1.5,
-                              offset: new HeadingPitchRange(0, CesiumMath.toRadians(-90), 5000000),
-                            });
-                          }
+                          viewerRef.current.cesiumElement.camera.flyTo({
+                            destination: Cartesian3.fromDegrees(
+                              satellite.degreesLong(
+                                satellite.eciToGeodetic(
+                                  satellite.propagate(
+                                    satellite.twoline2satrec(sat.tle1, sat.tle2), new Date()
+                                  ).position as satellite.EciVec3<number>,
+                                  satellite.gstime(new Date())
+                                ).longitude
+                              ),
+                              satellite.degreesLat(
+                                satellite.eciToGeodetic(
+                                  satellite.propagate(
+                                    satellite.twoline2satrec(sat.tle1, sat.tle2), new Date()
+                                  ).position as satellite.EciVec3<number>,
+                                  satellite.gstime(new Date())
+                                ).latitude
+                              ),
+                              sat.altitude * 1000 + 3000000
+                            ),
+                            duration: 1.5,
+                          });
                         }
                       }}
                       className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 hover:border-white/20 transition-all group"
