@@ -58,6 +58,11 @@ export default function Globe() {
   const [flyoverPanelOpen, setFlyoverPanelOpen] = useState(false);
   const [flyoverObjects, setFlyoverObjects] = useState<SatelliteData[]>([]);
   const [flyoverLocation, setFlyoverLocation] = useState<string | null>(null);
+  const [showWelcome, setShowWelcome] = useState(true);
+  const starlinkCount = satellites.filter(s => s.name.toUpperCase().includes('STARLINK')).length;
+  const primitiveCollectionRef = useRef<any>(null);
+
+
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -70,6 +75,7 @@ export default function Globe() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
     const processData = (data: string, type: "active" | "debris", sats: SatelliteData[], seenIds: Set<string>) => {
       const now = new Date();
       const gmst = satellite.gstime(now);
@@ -110,7 +116,7 @@ export default function Globe() {
       }
     };
 
-    fetch('/api/satellites')
+    fetch('/api/satellites', { signal: controller.signal })
       .then(res => res.json())
       .then((payloads: Array<{ data: string; type: "active" | "debris" }>) => {
         const sats: SatelliteData[] = [];
@@ -118,13 +124,12 @@ export default function Globe() {
         payloads.forEach(({ data, type }) => processData(data, type, sats, seenIds));
         console.log(`Loaded ${sats.length} satellites`);
         setSatellites(sats);
-        try {
-          sessionStorage.setItem('satellite-data', JSON.stringify(sats));
-        } catch {
-          console.warn('sessionStorage quota exceeded — skipping cache');
-        }
       })
-      .catch(err => console.error('Failed to load satellites:', err));
+      .catch(err => {
+        if (err.name !== 'AbortError') console.error('Failed to load satellites:', err);
+      });
+
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -147,43 +152,122 @@ export default function Globe() {
     const tick = setInterval(() => {
       const now = new Date();
       const gmst = satellite.gstime(now);
+      const collection = primitiveCollectionRef.current;
 
-      setSatellites(prev => prev.map(sat => {
-        try {
-          const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
-          const posVel = satellite.propagate(satrec, now);
-          if (
-            !posVel.position || typeof posVel.position === 'boolean' ||
-            !posVel.velocity || typeof posVel.velocity === 'boolean'
-          ) return sat;
+      setSatellites(prev => {
+        const updated = prev.map((sat, i) => {
+          try {
+            const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
+            const posVel = satellite.propagate(satrec, now);
+            if (
+              !posVel.position || typeof posVel.position === 'boolean' ||
+              !posVel.velocity || typeof posVel.velocity === 'boolean'
+            ) return sat;
 
-          const posEcf = satellite.eciToEcf(posVel.position, gmst);
-          const geodetic = satellite.eciToGeodetic(posVel.position, gmst);
+            const posEcf = satellite.eciToEcf(posVel.position, gmst);
+            const newPos = Cartesian3.fromElements(
+              posEcf.x * 1000,
+              posEcf.y * 1000,
+              posEcf.z * 1000
+            );
 
-          return {
-            ...sat,
-            position: Cartesian3.fromElements(posEcf.x * 1000, posEcf.y * 1000, posEcf.z * 1000),
-            altitude: geodetic.height,
-            velocity: Math.sqrt(
-              Math.pow(posVel.velocity.x, 2) +
-              Math.pow(posVel.velocity.y, 2) +
-              Math.pow(posVel.velocity.z, 2)
-            ),
-          };
-        } catch {
-          return sat;
-        }
-      }));
-    }, 5000); // update every 5 seconds
+            if (collection && i < collection.length) {
+              collection.get(i).position = newPos;
+            }
+
+            return {
+              ...sat,
+              position: newPos,
+              altitude: satellite.eciToGeodetic(posVel.position, gmst).height,
+              velocity: Math.sqrt(
+                Math.pow(posVel.velocity.x, 2) +
+                Math.pow(posVel.velocity.y, 2) +
+                Math.pow(posVel.velocity.z, 2)
+              ),
+            };
+          } catch { return sat; }
+        });
+        return updated;
+      });
+    }, 30000);
 
     return () => clearInterval(tick);
   }, [satellites.length]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement;
+    if (!viewer || satellites.length === 0) return;
+
+    if (primitiveCollectionRef.current) {
+      viewer.scene.primitives.remove(primitiveCollectionRef.current);
+    }
+
+    const { PointPrimitiveCollection, Color: CesiumColor } = (window as any).Cesium;
+    const collection = new PointPrimitiveCollection();
+
+    const filtered = satellites.filter(
+      sat => filter === "all" || sat.type === filter
+    );
+
+    filtered.forEach(sat => {
+      collection.add({
+        position: sat.position,
+        pixelSize: sat.type === "active" ? 5 : 4,
+        color: sat.type === "active"
+          ? CesiumColor.WHITE
+          : CesiumColor.RED,
+        id: sat.id,
+      });
+    });
+
+    viewer.scene.primitives.add(collection);
+    primitiveCollectionRef.current = collection;
+
+    return () => {
+      if (!viewer.isDestroyed()) {
+        viewer.scene.primitives.remove(collection);
+      }
+    };
+  }, [satellites.length, filter, ready]);
+
 
   if (!ready) return (
     <div className="h-screen w-screen bg-black flex items-center justify-center">
       <span className="text-slate-500 text-sm font-mono">Initializing...</span>
     </div>
   );
+
+  const getImpactText = (sat: SatelliteData) => {
+    const n = sat.name.toUpperCase();
+
+    if (sat.type === 'debris') {
+      if (n.includes('IRIDIUM')) return `Fragment from the 2009 Iridium-Cosmos collision — the first accidental hypervelocity satellite collision in history. It created over 2,000 tracked debris pieces still threatening orbital lanes today.`;
+      if (n.includes('COSMOS') || n.includes('FENGYUN')) return `This debris object is a fragment from a satellite breakup. At ${sat.velocity.toFixed(1)} km/s, even a 1cm piece carries the energy of a hand grenade on impact.`;
+      return `Uncontrolled debris at ${Math.round(sat.altitude)} km altitude traveling at ${sat.velocity.toFixed(1)} km/s. A collision here would generate thousands of new fragments in a cascading chain reaction.`;
+    }
+
+    if (n.includes('STARLINK')) return `...one of ${starlinkCount.toLocaleString()} Starlink satellites tracked. Provides broadband to rural Texas and Gulf Coast communities, but their sheer number is itself a growing debris risk concern.`;
+    if (n.includes('ISS') || n.includes('ZARYA') || n.includes('UNITY') || n.includes('DESTINY')) return `The International Space Station — crewed by astronauts and controlled from NASA Johnson Space Center in Houston. The ISS performs debris avoidance maneuvers several times per year.`;
+    if (n.includes('NOAA')) return `NOAA weather satellite providing the storm track and sea surface temperature data used by Houston emergency management during hurricane season.`;
+    if (n.includes('GOES')) return `GOES geostationary weather satellite — the primary source of satellite imagery for NWS Houston forecasters monitoring Gulf Coast storm systems.`;
+    if (n.includes('METOP')) return `ESA/EUMETSAT polar orbiting weather satellite. Provides atmospheric data that feeds into global hurricane forecast models covering the Gulf of Mexico.`;
+    if (n.includes('DMSP')) return `US military weather satellite operated by the Space Force. Provides cloud imagery and atmospheric data for defense operations in the Gulf Coast region.`;
+    if (n.includes('TERRA') || n.includes('AQUA') || n.includes('AURA')) return `NASA Earth Observing System satellite monitoring climate change indicators including sea surface temperatures, air quality, and ice sheet coverage.`;
+    if (n.includes('LANDSAT')) return `NASA/USGS Landsat satellite used by Texas A&M, UT, and Houston-area researchers to monitor coastal erosion, urban heat islands, and flooding after hurricane events.`;
+    if (n.includes('GPS') || n.includes('NAVSTAR')) return `US Space Force GPS satellite. Every navigation system, emergency dispatch, precision agriculture operation, and offshore oil rig in Texas depends on this signal.`;
+    if (n.includes('IRIDIUM')) return `Iridium communications satellite providing satellite phone coverage to maritime, aviation, and emergency responders operating in the Gulf of Mexico.`;
+    if (n.includes('GLOBALSTAR')) return `Globalstar communications satellite used by oil and gas operators for remote monitoring of Gulf Coast offshore platforms.`;
+    if (n.includes('ORBCOMM')) return `IoT and machine-to-machine satellite used for tracking shipping containers, pipeline monitoring, and asset tracking across the Texas Gulf Coast energy supply chain.`;
+    if (n.includes('FENGYUN')) return `Chinese meteorological satellite. International weather satellite data sharing agreements mean this satellite's data feeds into global models that NWS Houston also uses.`;
+    if (n.includes('RESURS') || n.includes('KANOPUS')) return `Russian Earth observation satellite. Shares an orbital altitude band with many US commercial satellites, making debris management a diplomatic as well as technical challenge.`;
+
+    // Altitude-based fallback
+    if (sat.altitude < 400) return `Very low Earth orbit at ${Math.round(sat.altitude)} km — experiencing atmospheric drag that will naturally deorbit it within months. However mid-flight collisions in this zone would still create long-lasting debris clouds.`;
+    if (sat.altitude < 600) return `Low Earth orbit at ${Math.round(sat.altitude)} km — the most congested orbital band. Home to the ISS, most Earth observation satellites, and thousands of Starlink units. Debris here can persist for years.`;
+    if (sat.altitude < 1200) return `Mid low Earth orbit at ${Math.round(sat.altitude)} km. Debris at this altitude can remain in orbit for decades, making this band particularly vulnerable to the Kessler Syndrome chain-reaction scenario.`;
+    if (sat.altitude < 2000) return `Upper LEO at ${Math.round(sat.altitude)} km — debris at this altitude can persist for centuries without natural deorbit, making active removal the only solution.`;
+    return `High Earth orbit at ${Math.round(sat.altitude)} km. Objects at this altitude experience virtually no atmospheric drag and will remain in orbit indefinitely without active removal.`;
+  };
 
   const handleFlyover = async () => {
     const zip = (document.getElementById('zip-input') as HTMLInputElement)?.value;
@@ -291,47 +375,49 @@ export default function Globe() {
             <ScreenSpaceEvent
               type={ScreenSpaceEventType.LEFT_CLICK}
               action={(movement) => {
-                if ("position" in movement && movement.position) {
-                  const viewer = viewerRef.current?.cesiumElement;
-                  if (viewer) {
-                    const pickedObject = viewer.scene.pick(movement.position);
-                    if (!pickedObject) {
-                      setSelectedSat(null);
-                      viewer.camera.flyHome(1.5);
-                    }
+                if (!("position" in movement) || !movement.position) return;
+                const viewer = viewerRef.current?.cesiumElement;
+                if (!viewer) return;
+
+                const picked = viewer.scene.pick(movement.position);
+
+                if (picked && picked.id) {
+                  const sat = satellites.find(s => s.id === picked.id);
+                  if (sat) {
+                    setSelectedSat(sat);
+                    setShowWelcome(false);
+                    viewer.camera.flyTo({
+                      destination: Cartesian3.fromDegrees(
+                        satellite.degreesLong(
+                          satellite.eciToGeodetic(
+                            satellite.propagate(
+                              satellite.twoline2satrec(sat.tle1, sat.tle2),
+                              new Date()
+                            ).position as satellite.EciVec3<number>,
+                            satellite.gstime(new Date())
+                          ).longitude
+                        ),
+                        satellite.degreesLat(
+                          satellite.eciToGeodetic(
+                            satellite.propagate(
+                              satellite.twoline2satrec(sat.tle1, sat.tle2),
+                              new Date()
+                            ).position as satellite.EciVec3<number>,
+                            satellite.gstime(new Date())
+                          ).latitude
+                        ),
+                        sat.altitude * 1000 + 3000000
+                      ),
+                      duration: 1.5,
+                    });
                   }
+                } else {
+                  setSelectedSat(null);
+                  viewer.camera.flyHome(1.5);
                 }
               }}
             />
           </ScreenSpaceEventHandler>
-
-          {satellites
-            .filter((sat) => filter === "all" || sat.type === filter)
-            .map((sat) => (
-              <Entity
-                key={sat.id}
-                id={sat.id}
-                position={sat.position}
-                name={sat.name}
-                onClick={() => {
-                  setSelectedSat(sat);
-                  if (viewerRef.current?.cesiumElement) {
-                    const target = viewerRef.current.cesiumElement.entities.getById(sat.id);
-                    if (target) {
-                      viewerRef.current.cesiumElement.flyTo(target, {
-                        duration: 1.5,
-                        offset: new HeadingPitchRange(0, CesiumMath.toRadians(-90), 5000000),
-                      });
-                    }
-                  }
-                }}
-              >
-                <PointGraphics
-                  pixelSize={sat.type === "active" ? 6 : 4}
-                  color={sat.type === "active" ? Color.WHITE : Color.RED}
-                />
-              </Entity>
-            ))}
 
           {selectedSat && (
             <Entity position={selectedSat.position}>
@@ -339,6 +425,11 @@ export default function Globe() {
             </Entity>
           )}
         </Viewer>
+        {/* App title */}
+        <div className="absolute top-6 left-6 z-50">
+          <div className="text-white text-lg font-bold tracking-tight">Orbital Watch</div>
+          <div className="text-slate-400 text-xs">Real-time debris risk for your community</div>
+        </div>
 
         {/* ✅ Toolbar — overlaid on top via z-index */}
         <div className="absolute top-6 right-6 z-50 flex gap-4 bg-slate-900/80 backdrop-blur-md p-2 rounded-lg border border-slate-700 shadow-2xl">
@@ -379,6 +470,18 @@ export default function Globe() {
             </button>
           </div>
         </div>
+
+        {showWelcome && (
+          <div
+            onClick={() => setShowWelcome(false)}
+            className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 border border-slate-700 text-white text-sm px-6 py-4 rounded-2xl text-center max-w-sm cursor-pointer"
+          >
+            <div className="text-base font-semibold mb-1">27,000+ objects orbit Earth right now</div>
+            <div className="text-slate-400 text-xs mb-2">White = active satellites · Red = space debris</div>
+            <div className="text-slate-500 text-xs">Enter your ZIP code above or click the Texas circle to see what's above you</div>
+            <div className="text-slate-600 text-[10px] mt-2">tap anywhere to dismiss</div>
+          </div>
+        )}
 
         {/* ✅ Flyover count badge */}
         {flyoverCount !== null && (
@@ -608,7 +711,7 @@ export default function Globe() {
                   <h3 className="text-xs font-bold uppercase tracking-[0.2em]">Community Impact</h3>
                 </div>
                 <p className="text-xs text-indigo-100/60 leading-relaxed font-light relative z-10">
-                  Tracking extreme weather patterns. Community leaders in Houston utilize this telemetry to predict localized flash flooding and identify urban heat islands.
+                  {getImpactText(selectedSat)}
                 </p>
               </motion.div>
             </motion.div>
