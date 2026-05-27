@@ -56,6 +56,8 @@ export default function Globe() {
   const [flyoverCount, setFlyoverCount] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [flyoverPanelOpen, setFlyoverPanelOpen] = useState(false);
+  const [flyoverObjects, setFlyoverObjects] = useState<SatelliteData[]>([]);
+  const [flyoverLocation, setFlyoverLocation] = useState<string | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -190,25 +192,34 @@ export default function Globe() {
       const geo = await fetch(`https://api.zippopotam.us/us/${zip}`).then(r => r.json());
       const lat = parseFloat(geo.places[0].latitude);
       const lon = parseFloat(geo.places[0]['longitude']);
+      const city = geo.places[0]['place name'];
+      const state = geo.places[0]['state abbreviation'];
+
       if (viewerRef.current?.cesiumElement) {
         viewerRef.current.cesiumElement.camera.flyTo({
           destination: Cartesian3.fromDegrees(lon, lat, 3500000),
           duration: 2.5,
         });
       }
+
+      const now = new Date();
+      const gmst = satellite.gstime(now);
       const nearby = satellites.filter((sat) => {
-        const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
-        const now = new Date();
-        const posVel = satellite.propagate(satrec, now);
-        if (!posVel.position || typeof posVel.position === 'boolean') return false;
-        const gmst = satellite.gstime(now);
-        const geo2 = satellite.eciToGeodetic(posVel.position, gmst);
-        const satLat = satellite.degreesLat(geo2.latitude);
-        const satLon = satellite.degreesLong(geo2.longitude);
-        return Math.abs(satLat - lat) < 12 && Math.abs(satLon - lon) < 12;
+        try {
+          const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
+          const posVel = satellite.propagate(satrec, now);
+          if (!posVel.position || typeof posVel.position === 'boolean') return false;
+          const geo2 = satellite.eciToGeodetic(posVel.position, gmst);
+          const satLat = satellite.degreesLat(geo2.latitude);
+          const satLon = satellite.degreesLong(geo2.longitude);
+          return Math.abs(satLat - lat) < 12 && Math.abs(satLon - lon) < 12;
+        } catch { return false; }
       });
+
+      setFlyoverObjects(nearby);
       setFlyoverCount(nearby.length);
-      setFlyoverPanelOpen(true); // auto-open the panel
+      setFlyoverLocation(`${city}, ${state}`);
+      setFlyoverPanelOpen(true);
     } catch {
       console.error('ZIP lookup failed');
     }
@@ -243,6 +254,22 @@ export default function Globe() {
             position={Cartesian3.fromDegrees(-95.3698, 29.7604, 0)}
             onClick={() => {
               setFlyoverPanelOpen(true);
+              setFlyoverLocation('Houston, TX');
+              const now = new Date();
+              const gmst = satellite.gstime(now);
+              const nearby = satellites.filter((sat) => {
+                try {
+                  const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
+                  const posVel = satellite.propagate(satrec, now);
+                  if (!posVel.position || typeof posVel.position === 'boolean') return false;
+                  const geo2 = satellite.eciToGeodetic(posVel.position, gmst);
+                  const satLat = satellite.degreesLat(geo2.latitude);
+                  const satLon = satellite.degreesLong(geo2.longitude);
+                  return Math.abs(satLat - 29.7604) < 12 && Math.abs(satLon - (-95.3698)) < 12;
+                } catch { return false; }
+              });
+              setFlyoverObjects(nearby);
+              setFlyoverCount(nearby.length);
               if (viewerRef.current?.cesiumElement) {
                 viewerRef.current.cesiumElement.camera.flyTo({
                   destination: Cartesian3.fromDegrees(-95.3698, 29.7604, 3500000),
@@ -368,70 +395,126 @@ export default function Globe() {
               animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
               exit={{ opacity: 0, x: -40, filter: "blur(10px)" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="absolute top-24 left-3 w-[340px] z-50 flex flex-col p-6 rounded-3xl"
+              className="absolute top-24 left-3 w-[360px] z-50 flex flex-col rounded-3xl overflow-hidden"
               style={{
-                background: "linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(0,0,0,0.95) 100%)",
+                maxHeight: 'calc(100vh - 8rem)',
+                background: "linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(0,0,0,0.97) 100%)",
                 backdropFilter: "blur(20px)",
                 border: "1px solid rgba(255,255,255,0.08)",
-                borderTop: "1px solid rgba(239, 68, 68, 0.4)",
+                borderTop: "1px solid rgba(239,68,68,0.4)",
                 boxShadow: "0 20px 50px rgba(0,0,0,0.8)",
                 color: "white"
               }}
             >
-              {/* Header */}
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <span className="uppercase tracking-[0.3em] text-[10px] font-bold text-red-400">Houston Zone</span>
-                  <h2 className="text-xl font-light tracking-tight mt-1">Orbital Risk Area</h2>
+              {/* Fixed header */}
+              <div className="p-6 pb-3 shrink-0">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <span className="uppercase tracking-[0.3em] text-[10px] font-bold text-red-400">Live Overhead Scan</span>
+                    <h2 className="text-xl font-light tracking-tight mt-1">
+                      {flyoverLocation ?? 'Houston Zone'}
+                    </h2>
+                  </div>
+                  <button
+                    onClick={() => setFlyoverPanelOpen(false)}
+                    className="p-1 hover:bg-slate-800 rounded-full transition-colors"
+                  >
+                    <X size={18} className="text-slate-400 hover:text-white" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => setFlyoverPanelOpen(false)}
-                  className="p-1 hover:bg-slate-800 rounded-full transition-colors"
-                >
-                  <X size={18} className="text-slate-400 hover:text-white" />
-                </button>
+
+                {/* Risk score */}
+                {flyoverObjects.length > 0 && (() => {
+                  const debrisCount = flyoverObjects.filter(s => s.type === 'debris').length;
+                  const debrisRatio = debrisCount / flyoverObjects.length;
+                  const riskLevel = debrisRatio > 0.5 ? 'HIGH' : debrisRatio > 0.25 ? 'MODERATE' : 'LOW';
+                  const riskColor = riskLevel === 'HIGH' ? 'text-red-400 border-red-500/30 bg-red-500/10'
+                    : riskLevel === 'MODERATE' ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
+                      : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
+                  return (
+                    <div className={`flex items-center justify-between p-3 rounded-xl border mb-3 ${riskColor}`}>
+                      <div>
+                        <div className="text-[10px] uppercase tracking-widest font-bold mb-0.5">Debris Risk Level</div>
+                        <div className="text-lg font-bold">{riskLevel}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold">{flyoverObjects.length}</div>
+                        <div className="text-[10px] uppercase tracking-widest">objects overhead</div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Stats row */}
+                {flyoverObjects.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
+                      <div className="text-sm font-bold text-white">
+                        {flyoverObjects.filter(s => s.type === 'active').length}
+                      </div>
+                      <div className="text-[9px] uppercase tracking-wider text-slate-400">Active</div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
+                      <div className="text-sm font-bold text-red-400">
+                        {flyoverObjects.filter(s => s.type === 'debris').length}
+                      </div>
+                      <div className="text-[9px] uppercase tracking-wider text-slate-400">Debris</div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
+                      <div className="text-sm font-bold text-cyan-400">
+                        {flyoverObjects.length > 0
+                          ? Math.round(flyoverObjects.reduce((a, s) => a + s.altitude, 0) / flyoverObjects.length)
+                          : 0} km
+                      </div>
+                      <div className="text-[9px] uppercase tracking-wider text-slate-400">Avg Alt</div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 px-1">
+                  Objects — sorted by altitude
+                </div>
               </div>
 
-              {/* Circle explanation */}
-              <div className="flex items-center gap-3 mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
-                <div className="w-3 h-3 rounded-full bg-red-500 shadow-[0_0_12px_rgba(239,68,68,0.8)] shrink-0" />
-                <p className="text-xs text-red-200 leading-relaxed">
-                  This circle represents a <strong>500km radius</strong> around Houston — the zone where orbital objects directly affect local infrastructure.
-                </p>
+              {/* Scrollable satellite list */}
+              <div className="overflow-y-auto px-6 pb-6 space-y-2" style={{ flex: 1 }}>
+                {flyoverObjects.length === 0 && (
+                  <div className="text-center text-slate-500 text-xs py-8">No objects detected overhead</div>
+                )}
+                {flyoverObjects
+                  .slice()
+                  .sort((a, b) => a.altitude - b.altitude)
+                  .map((sat) => (
+                    <div
+                      key={sat.id}
+                      onClick={() => {
+                        setSelectedSat(sat);
+                        setFlyoverPanelOpen(false);
+                        if (viewerRef.current?.cesiumElement) {
+                          const target = viewerRef.current.cesiumElement.entities.getById(sat.id);
+                          if (target) {
+                            viewerRef.current.cesiumElement.flyTo(target, {
+                              duration: 1.5,
+                              offset: new HeadingPitchRange(0, CesiumMath.toRadians(-90), 5000000),
+                            });
+                          }
+                        }
+                      }}
+                      className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 hover:border-white/20 transition-all group"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className={`w-2 h-2 rounded-full shrink-0 ${sat.type === 'debris' ? 'bg-red-500' : 'bg-white'}`} />
+                        <span className="text-xs text-slate-200 truncate group-hover:text-white transition-colors">
+                          {sat.name}
+                        </span>
+                      </div>
+                      <div className="text-right shrink-0 ml-2">
+                        <div className="text-xs font-mono text-cyan-400">{Math.round(sat.altitude)} km</div>
+                        <div className="text-[9px] text-slate-500">{sat.velocity.toFixed(1)} km/s</div>
+                      </div>
+                    </div>
+                  ))}
               </div>
-
-              {/* Satellite count */}
-              {flyoverCount !== null && (
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 mb-4">
-                  <span className="text-2xl font-bold text-amber-400">{flyoverCount}</span>
-                  <p className="text-xs text-amber-200 mt-1">objects currently passing overhead within 12° of this location</p>
-                </div>
-              )}
-
-              {/* Why it matters cards */}
-              <div className="space-y-3 text-xs text-slate-300 leading-relaxed">
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                  <span className="text-cyan-400 font-bold block mb-1">🚀 NASA Johnson Space Center</span>
-                  Mission Control for the ISS and every US crewed spaceflight operates from inside this zone. Orbital debris is a direct operational threat.
-                </div>
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                  <span className="text-emerald-400 font-bold block mb-1">⚡ Energy Sector</span>
-                  Offshore oil platforms in the Gulf depend on GPS and satellite communications routed through orbit. A debris cascade disrupts billions in daily operations.
-                </div>
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                  <span className="text-purple-400 font-bold block mb-1">🌀 Hurricane Forecasting</span>
-                  NOAA weather satellites tracked here provide the storm surge and rainfall models that protect 7 million Houston-area residents during hurricane season.
-                </div>
-              </div>
-
-              <a
-                href="https://www.congress.gov"
-                target="_blank"
-                rel="noreferrer"
-                className="block mt-4 text-center py-2 rounded-xl bg-red-600/80 hover:bg-red-500 text-white text-xs font-bold transition-all"
-              >
-                📜 Urge Congress to Act →
-              </a>
             </motion.div>
           )}
         </AnimatePresence>
