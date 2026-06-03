@@ -1,71 +1,112 @@
 "use client";
 
-import * as satellite from "satellite.js";
-import { X, Activity, Mountain, ShieldAlert } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { 
+  Play, 
+  Pause, 
+  RotateCcw, 
+  Crosshair, 
+  Activity, 
+  Gauge, 
+  Fuel, 
+  AlertTriangle, 
+  CheckCircle2, 
+  HelpCircle,
+  Clock
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Component, ReactNode, useState, useEffect, useRef } from 'react';
-import { Viewer as CesiumViewer, Cartesian3, Color, ScreenSpaceEventType, HeadingPitchRange, Math as CesiumMath } from "cesium";
-import { CesiumComponentRef, Viewer, Entity, ScreenSpaceEventHandler, ScreenSpaceEvent, EllipseGraphics, PointGraphics } from "resium";
+import { 
+  Viewer as CesiumViewer, 
+  Cartesian3, 
+  Color, 
+  Math as CesiumMath 
+} from "cesium";
+import { 
+  CesiumComponentRef, 
+  Viewer, 
+  Entity, 
+  PointGraphics, 
+  PolylineGraphics, 
+  EllipsoidGraphics,
+  ModelGraphics
+} from "resium";
 
-class CesiumErrorBoundary extends Component<{
-  children: ReactNode;
-}, {
-  error: string | null;
-}> {
-  state = { error: null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error: error.message };
-  }
-
-  componentDidCatch(error: Error, info: any) {
-    console.error("Cesium boundary caught:", error, info);
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div className="text-white p-8 bg-red-900 h-screen">
-          <h2 className="text-xl font-bold mb-4">Cesium Error:</h2>
-          <pre className="text-sm whitespace-pre-wrap">{this.state.error}</pre>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-export interface SatelliteData {
-  id: string;
-  name: string;
-  position: Cartesian3;
-  altitude: number;
-  velocity: number;
-  tle1: string;
-  tle2: string;
-  type: "active" | "debris";
+interface TrajectoryPoint {
+  step: number;
+  sc_pos: Cartesian3;
+  mars_pos: Cartesian3;
+  earth_pos: Cartesian3;
+  thrust: number;
+  isp: number;
+  mass: number;
+  anomaly: boolean;
 }
 
 export default function Globe() {
   const [ready, setReady] = useState(false);
-  const [satellites, setSatellites] = useState<SatelliteData[]>([]);
-  const [selectedSat, setSelectedSat] = useState<SatelliteData | null>(null);
-  const [filter, setFilter] = useState<"all" | "active" | "debris">("all");
+  const [trajectoryData, setTrajectoryData] = useState<any | null>(null);
+  const [animationStep, setAnimationStep] = useState<number>(0);
+  const [isAnimating, setIsAnimating] = useState<boolean>(false);
+  const [trackSC, setTrackSC] = useState<boolean>(false);
+  const [showGuide, setShowGuide] = useState<boolean>(true);
+  
   const viewerRef = useRef<CesiumComponentRef<CesiumViewer>>(null);
-  const [flyoverCount, setFlyoverCount] = useState<number | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [flyoverPanelOpen, setFlyoverPanelOpen] = useState(false);
-  const [flyoverObjects, setFlyoverObjects] = useState<SatelliteData[]>([]);
-  const [flyoverLocation, setFlyoverLocation] = useState<string | null>(null);
-  const [showWelcome, setShowWelcome] = useState(true);
-  const starlinkCount = satellites.filter(s => s.name.toUpperCase().includes('STARLINK')).length;
-  const primitiveCollectionRef = useRef<any>(null);
+  const consoleEndRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll the guidance console to the bottom as the simulation steps forward
+  useEffect(() => {
+    consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [animationStep]);
 
+  const getConsoleLogs = () => {
+    if (!trajectoryData) return [];
+    const logsList: string[] = [];
+    const steps = trajectoryData.steps;
+    const thrusts = trajectoryData.thrust;
+    
+    for (let i = 0; i <= animationStep; i++) {
+      const hr = steps[i];
+      if (i === 0) {
+        logsList.push(`[0h] 🚀 Earth departure initiated. PPO policy loaded.`);
+      }
+      
+      if (hr === 1000) {
+        logsList.push(`[1000h] ⚠️ Warning: Thruster specific impulse decay started.`);
+      }
+      
+      const prevAnomaly = i > 0 ? (trajectoryData.anomaly[i-1] || steps[i-1] >= 1497) : false;
+      const currAnomaly = trajectoryData.anomaly[i] || hr >= 1497;
+      if (currAnomaly && !prevAnomaly && hr < 1500) {
+        logsList.push(`[${hr}h] 🚨 Isolation Forest: Anomaly flagged in thruster telemetry.`);
+      }
+      
+      if (hr === 1500) {
+        logsList.push(`[1500h] 💥 Critical: Catastrophic hardware failure. Isp locked at 1514.7s. PPO controller re-optimizing path.`);
+      }
+      
+      if (i > 0) {
+        const isBurning = thrusts[i] > 0.005;
+        const wasBurning = thrusts[i - 1] > 0.005;
+        if (isBurning && !wasBurning) {
+          logsList.push(`[${hr}h] ⚡ PPO: Thruster ignition (Commanding ${(thrusts[i]/0.289*100).toFixed(0)}% burn).`);
+        } else if (!isBurning && wasBurning) {
+          logsList.push(`[${hr}h] 💤 PPO: Burn complete. Transitioning to coasting.`);
+        }
+      }
+      
+      if (i === steps.length - 1 && animationStep === steps.length - 1) {
+        logsList.push(`[${hr}h] 🎯 Mars intercept complete. Insertion successful.`);
+      }
+    }
+    return logsList.slice(-25); // Keep the last 25 logs for display
+  };
 
+  const logs = getConsoleLogs();
+
+  // 1. Initial Cesium Ready Check
   useEffect(() => {
     const interval = setInterval(() => {
-      if (typeof window !== 'undefined' && (window as any).Cesium) {
+      if (typeof window !== "undefined" && (window as any).Cesium) {
         setReady(true);
         clearInterval(interval);
       }
@@ -73,724 +114,492 @@ export default function Globe() {
     return () => clearInterval(interval);
   }, []);
 
+  // 2. Fetch Trajectory JSON Data
   useEffect(() => {
-    const controller = new AbortController();
-    const processData = (data: string, type: "active" | "debris", sats: SatelliteData[], seenIds: Set<string>) => {
-      const now = new Date();
-      const gmst = satellite.gstime(now);
-      const lines = data.split("\n");
-      for (let i = 0; i < lines.length - 2; i += 3) {
-        const name = lines[i].trim();
-        const tle1 = lines[i + 1]?.trim();
-        const tle2 = lines[i + 2]?.trim();
-        if (!tle1?.startsWith('1 ') || !tle2?.startsWith('2 ')) continue;
-        try {
-          const satrec = satellite.twoline2satrec(tle1, tle2);
-          const posVel = satellite.propagate(satrec, now);
-          if (
-            posVel.position && typeof posVel.position !== "boolean" && !isNaN(posVel.position.x) &&
-            posVel.velocity && typeof posVel.velocity !== "boolean"
-          ) {
-            const posEcf = satellite.eciToEcf(posVel.position, gmst);
-            const geodetic = satellite.eciToGeodetic(posVel.position, gmst);
-            let uniqueId = name;
-            if (seenIds.has(uniqueId)) uniqueId = `${name}-${i}`;
-            seenIds.add(uniqueId);
-            sats.push({
-              id: uniqueId,
-              name,
-              position: Cartesian3.fromElements(posEcf.x * 1000, posEcf.y * 1000, posEcf.z * 1000),
-              altitude: geodetic.height,
-              velocity: Math.sqrt(
-                Math.pow(posVel.velocity.x, 2) +
-                Math.pow(posVel.velocity.y, 2) +
-                Math.pow(posVel.velocity.z, 2)
-              ),
-              tle1,
-              tle2,
-              type
-            });
-          }
-        } catch { /* skip bad TLEs */ }
-      }
-    };
-
-    fetch('/api/satellites', { signal: controller.signal })
-      .then(res => res.json())
-      .then((payloads: Array<{ data: string; type: "active" | "debris" }>) => {
-        const sats: SatelliteData[] = [];
-        const seenIds = new Set<string>();
-        payloads.forEach(({ data, type }) => processData(data, type, sats, seenIds));
-        console.log(`Loaded ${sats.length} satellites`);
-        setSatellites(sats);
+    fetch("/trajectory_data.json")
+      .then((res) => res.json())
+      .then((data) => {
+        console.log("Loaded trajectory data:", data);
+        setTrajectoryData(data);
       })
-      .catch(err => {
-        if (err.name !== 'AbortError') console.error('Failed to load satellites:', err);
-      });
-
-    return () => controller.abort();
+      .catch((err) => console.error("Failed to load trajectory data:", err));
   }, []);
 
-  useEffect(() => {
-    if (!ready) return;
-    const timeout = setTimeout(() => {
-      const v = viewerRef.current?.cesiumElement;
-      if (v && !v.isDestroyed()) {
-        v.canvas.style.width = '100vw';
-        v.canvas.style.height = '100vh';
-        v.resize();
-        v.scene.requestRender();
-      }
-    }, 500); // wait for DOM to settle
-    return () => clearTimeout(timeout);
-  }, [ready]);
-
-  useEffect(() => {
-    if (satellites.length === 0) return;
-
-    const tick = setInterval(() => {
-      const now = new Date();
-      const gmst = satellite.gstime(now);
-      const collection = primitiveCollectionRef.current;
-
-      setSatellites(prev => {
-        const updated = prev.map((sat, i) => {
-          try {
-            const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
-            const posVel = satellite.propagate(satrec, now);
-            if (
-              !posVel.position || typeof posVel.position === 'boolean' ||
-              !posVel.velocity || typeof posVel.velocity === 'boolean'
-            ) return sat;
-
-            const posEcf = satellite.eciToEcf(posVel.position, gmst);
-            const newPos = Cartesian3.fromElements(
-              posEcf.x * 1000,
-              posEcf.y * 1000,
-              posEcf.z * 1000
-            );
-
-            if (collection && i < collection.length) {
-              collection.get(i).position = newPos;
-            }
-
-            return {
-              ...sat,
-              position: newPos,
-              altitude: satellite.eciToGeodetic(posVel.position, gmst).height,
-              velocity: Math.sqrt(
-                Math.pow(posVel.velocity.x, 2) +
-                Math.pow(posVel.velocity.y, 2) +
-                Math.pow(posVel.velocity.z, 2)
-              ),
-            };
-          } catch { return sat; }
-        });
-        return updated;
-      });
-    }, 30000);
-
-    return () => clearInterval(tick);
-  }, [satellites.length]);
-
+  // 3. Configure Cesium Environment (Disable Globe & Set Camera View)
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement;
-    if (!viewer || satellites.length === 0) return;
+    if (!viewer || !ready) return;
 
-    if (primitiveCollectionRef.current) {
-      viewer.scene.primitives.remove(primitiveCollectionRef.current);
+    // Hide default Earth globe to enable Sun-centered Heliocentric Mode
+    viewer.scene.globe.show = false;
+    if (viewer.scene.skyAtmosphere) {
+      viewer.scene.skyAtmosphere.show = false;
     }
 
-    const { PointPrimitiveCollection, Color: CesiumColor } = (window as any).Cesium;
-    const collection = new PointPrimitiveCollection();
-
-    const filtered = satellites.filter(
-      sat => filter === "all" || sat.type === filter
-    );
-
-    filtered.forEach(sat => {
-      collection.add({
-        position: sat.position,
-        pixelSize: sat.type === "active" ? 5 : 4,
-        color: sat.type === "active"
-          ? CesiumColor.WHITE
-          : CesiumColor.RED,
-        id: sat.id,
-      });
+    // Set initial camera view centered at origin (Sun) looking down at the solar system plane
+    viewer.camera.setView({
+      destination: Cartesian3.fromElements(0, -3.2e11, 1.5e11),
+      orientation: {
+        heading: CesiumMath.toRadians(0),
+        pitch: CesiumMath.toRadians(-25),
+        roll: 0,
+      },
     });
+  }, [ready]);
 
-    viewer.scene.primitives.add(collection);
-    primitiveCollectionRef.current = collection;
+  // 4. Animation Control Interval Loop
+  useEffect(() => {
+    if (!isAnimating || !trajectoryData) return;
+    const interval = setInterval(() => {
+      setAnimationStep((prev) => {
+        if (prev >= trajectoryData.steps.length - 1) {
+          setIsAnimating(false);
+          return prev;
+        }
+        return prev + 1;
+      });
+    }, 45); // ~22 frames per second
+    return () => clearInterval(interval);
+  }, [isAnimating, trajectoryData]);
 
-    return () => {
-      if (!viewer.isDestroyed()) {
-        viewer.scene.primitives.remove(collection);
+  // 5. Dynamic Camera Tracking of the Spacecraft Entity
+  useEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement;
+    if (!viewer || !ready || !trajectoryData) return;
+
+    if (trackSC) {
+      const entity = viewer.entities.getById("spacecraft");
+      if (entity) {
+        viewer.trackedEntity = entity;
       }
-    };
-  }, [satellites.length, filter, ready]);
+    } else {
+      viewer.trackedEntity = undefined;
+    }
+  }, [trackSC, animationStep, ready, trajectoryData]);
 
+  if (!ready || !trajectoryData) {
+    return (
+      <div className="h-screen w-screen bg-black flex flex-col items-center justify-center space-y-4">
+        <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+        <span className="text-slate-400 text-sm font-mono tracking-widest">LOADING TELEMETRY...</span>
+      </div>
+    );
+  }
 
-  if (!ready) return (
-    <div className="h-screen w-screen bg-black flex items-center justify-center">
-      <span className="text-slate-500 text-sm font-mono">Initializing...</span>
-    </div>
+  // Precompute Cartesian3 arrays for orbital lines
+  const earthPositions = trajectoryData.earth_pos.map((p: number[]) => 
+    Cartesian3.fromElements(p[0] * 1000, p[1] * 1000, p[2] * 1000)
+  );
+  const marsPositions = trajectoryData.mars_pos.map((p: number[]) => 
+    Cartesian3.fromElements(p[0] * 1000, p[1] * 1000, p[2] * 1000)
+  );
+  const scPositions = trajectoryData.sc_pos.map((p: number[]) => 
+    Cartesian3.fromElements(p[0] * 1000, p[1] * 1000, p[2] * 1000)
   );
 
-  const getImpactText = (sat: SatelliteData) => {
-    const n = sat.name.toUpperCase();
+  // Extract current telemetry values based on animation step
+  const currentHour = trajectoryData.steps[animationStep];
+  const currentDay = Math.floor(currentHour / 24);
+  
+  const scPosNow = scPositions[animationStep];
+  const earthPosNow = earthPositions[animationStep];
+  const marsPosNow = marsPositions[animationStep];
 
-    if (sat.type === 'debris') {
-      if (n.includes('IRIDIUM')) return `Fragment from the 2009 Iridium-Cosmos collision — the first accidental hypervelocity satellite collision in history. It created over 2,000 tracked debris pieces still threatening orbital lanes today.`;
-      if (n.includes('COSMOS') || n.includes('FENGYUN')) return `This debris object is a fragment from a satellite breakup. At ${sat.velocity.toFixed(1)} km/s, even a 1cm piece carries the energy of a hand grenade on impact.`;
-      return `Uncontrolled debris at ${Math.round(sat.altitude)} km altitude traveling at ${sat.velocity.toFixed(1)} km/s. A collision here would generate thousands of new fragments in a cascading chain reaction.`;
-    }
+  const thrustVal = trajectoryData.thrust[animationStep];
+  const ispVal = trajectoryData.isp[animationStep];
+  const massVal = trajectoryData.mass[animationStep];
+  const fuelRemaining = Math.max(0.0, massVal - 1648.0);
+  const isAnomalyActive = trajectoryData.anomaly[animationStep];
+  const isCatastrophic = currentHour >= 1500;
 
-    if (n.includes('STARLINK')) return `...one of ${starlinkCount.toLocaleString()} Starlink satellites tracked. Provides broadband to rural Texas and Gulf Coast communities, but their sheer number is itself a growing debris risk concern.`;
-    if (n.includes('ISS') || n.includes('ZARYA') || n.includes('UNITY') || n.includes('DESTINY')) return `The International Space Station — crewed by astronauts and controlled from NASA Johnson Space Center in Houston. The ISS performs debris avoidance maneuvers several times per year.`;
-    if (n.includes('NOAA')) return `NOAA weather satellite providing the storm track and sea surface temperature data used by Houston emergency management during hurricane season.`;
-    if (n.includes('GOES')) return `GOES geostationary weather satellite — the primary source of satellite imagery for NWS Houston forecasters monitoring Gulf Coast storm systems.`;
-    if (n.includes('METOP')) return `ESA/EUMETSAT polar orbiting weather satellite. Provides atmospheric data that feeds into global hurricane forecast models covering the Gulf of Mexico.`;
-    if (n.includes('DMSP')) return `US military weather satellite operated by the Space Force. Provides cloud imagery and atmospheric data for defense operations in the Gulf Coast region.`;
-    if (n.includes('TERRA') || n.includes('AQUA') || n.includes('AURA')) return `NASA Earth Observing System satellite monitoring climate change indicators including sea surface temperatures, air quality, and ice sheet coverage.`;
-    if (n.includes('LANDSAT')) return `NASA/USGS Landsat satellite used by Texas A&M, UT, and Houston-area researchers to monitor coastal erosion, urban heat islands, and flooding after hurricane events.`;
-    if (n.includes('GPS') || n.includes('NAVSTAR')) return `US Space Force GPS satellite. Every navigation system, emergency dispatch, precision agriculture operation, and offshore oil rig in Texas depends on this signal.`;
-    if (n.includes('IRIDIUM')) return `Iridium communications satellite providing satellite phone coverage to maritime, aviation, and emergency responders operating in the Gulf of Mexico.`;
-    if (n.includes('GLOBALSTAR')) return `Globalstar communications satellite used by oil and gas operators for remote monitoring of Gulf Coast offshore platforms.`;
-    if (n.includes('ORBCOMM')) return `IoT and machine-to-machine satellite used for tracking shipping containers, pipeline monitoring, and asset tracking across the Texas Gulf Coast energy supply chain.`;
-    if (n.includes('FENGYUN')) return `Chinese meteorological satellite. International weather satellite data sharing agreements mean this satellite's data feeds into global models that NWS Houston also uses.`;
-    if (n.includes('RESURS') || n.includes('KANOPUS')) return `Russian Earth observation satellite. Shares an orbital altitude band with many US commercial satellites, making debris management a diplomatic as well as technical challenge.`;
+  // Calculate distances relative to Mars and Sun in kilometers
+  const scPosKm = trajectoryData.sc_pos[animationStep];
+  const marsPosKm = trajectoryData.mars_pos[animationStep];
+  const sunDistKm = Math.sqrt(scPosKm[0]**2 + scPosKm[1]**2 + scPosKm[2]**2);
+  const marsDistKm = Math.sqrt(
+    (marsPosKm[0] - scPosKm[0])**2 + 
+    (marsPosKm[1] - scPosKm[1])**2 + 
+    (marsPosKm[2] - scPosKm[2])**2
+  );
 
-    // Altitude-based fallback
-    if (sat.altitude < 400) return `Very low Earth orbit at ${Math.round(sat.altitude)} km — experiencing atmospheric drag that will naturally deorbit it within months. However mid-flight collisions in this zone would still create long-lasting debris clouds.`;
-    if (sat.altitude < 600) return `Low Earth orbit at ${Math.round(sat.altitude)} km — the most congested orbital band. Home to the ISS, most Earth observation satellites, and thousands of Starlink units. Debris here can persist for years.`;
-    if (sat.altitude < 1200) return `Mid low Earth orbit at ${Math.round(sat.altitude)} km. Debris at this altitude can remain in orbit for decades, making this band particularly vulnerable to the Kessler Syndrome chain-reaction scenario.`;
-    if (sat.altitude < 2000) return `Upper LEO at ${Math.round(sat.altitude)} km — debris at this altitude can persist for centuries without natural deorbit, making active removal the only solution.`;
-    return `High Earth orbit at ${Math.round(sat.altitude)} km. Objects at this altitude experience virtually no atmospheric drag and will remain in orbit indefinitely without active removal.`;
-  };
-
-  const handleFlyover = async () => {
-    const zip = (document.getElementById('zip-input') as HTMLInputElement)?.value;
-    if (!zip || zip.length !== 5) return;
-    try {
-      const geo = await fetch(`https://api.zippopotam.us/us/${zip}`).then(r => r.json());
-      const lat = parseFloat(geo.places[0].latitude);
-      const lon = parseFloat(geo.places[0]['longitude']);
-      const city = geo.places[0]['place name'];
-      const state = geo.places[0]['state abbreviation'];
-
-      if (viewerRef.current?.cesiumElement) {
-        viewerRef.current.cesiumElement.camera.flyTo({
-          destination: Cartesian3.fromDegrees(lon, lat, 3500000),
-          duration: 2.5,
-        });
-      }
-
-      const now = new Date();
-      const gmst = satellite.gstime(now);
-      const nearby = satellites.filter((sat) => {
-        try {
-          const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
-          const posVel = satellite.propagate(satrec, now);
-          if (!posVel.position || typeof posVel.position === 'boolean') return false;
-          const geo2 = satellite.eciToGeodetic(posVel.position, gmst);
-          const satLat = satellite.degreesLat(geo2.latitude);
-          const satLon = satellite.degreesLong(geo2.longitude);
-          return Math.abs(satLat - lat) < 12 && Math.abs(satLon - lon) < 12;
-        } catch { return false; }
-      });
-
-      setFlyoverObjects(nearby);
-      setFlyoverCount(nearby.length);
-      setFlyoverLocation(`${city}, ${state}`);
-      setFlyoverPanelOpen(true);
-    } catch {
-      console.error('ZIP lookup failed');
-    }
-  };
+  // Scaled radii for planetary bodies (in meters) for visible display at astronomical scales
+  const sunRadii = new Cartesian3(1.4e10, 1.4e10, 1.4e10);
+  const earthRadii = new Cartesian3(6.5e9, 6.5e9, 6.5e9);
+  const marsRadii = new Cartesian3(5.5e9, 5.5e9, 5.5e9);
 
   return (
-    <CesiumErrorBoundary>
-      <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', overflow: 'hidden' }}>
+    <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", overflow: "hidden" }}>
+      {/* 3D Cesium Canvas */}
+      <Viewer
+        ref={viewerRef}
+        full
+        animation={false}
+        timeline={false}
+        geocoder={false}
+        homeButton={false}
+        infoBox={false}
+        sceneModePicker={false}
+        navigationHelpButton={false}
+        baseLayerPicker={false}
+      >
+        {/* Orbit Polylines */}
+        <Entity>
+          <PolylineGraphics
+            positions={earthPositions}
+            width={1.5}
+            material={Color.BLUE.withAlpha(0.3)}
+          />
+        </Entity>
+        <Entity>
+          <PolylineGraphics
+            positions={marsPositions}
+            width={1.5}
+            material={Color.RED.withAlpha(0.3)}
+          />
+        </Entity>
+        <Entity>
+          <PolylineGraphics
+            positions={scPositions}
+            width={2.5}
+            material={Color.CYAN}
+          />
+        </Entity>
 
-        {/* ✅ Viewer — direct child of outer div, NOT inside toolbar */}
-        <Viewer
-          ref={viewerRef}
-          full
-          animation={false}
-          timeline={false}
-          geocoder={false}
-          homeButton={false}
-          infoBox={false}
-          sceneModePicker={false}
-          navigationHelpButton={false}
-          baseLayerPicker={false}
-          onSelectedEntityChange={(entity) => {
-            if (entity && entity.id) {
-              const satData = satellites.find(s => s.name === entity.id);
-              setSelectedSat(satData || null);
-            } else {
-              setSelectedSat(null);
-            }
-          }}
-        >
-          <Entity
-            position={Cartesian3.fromDegrees(-95.3698, 29.7604, 0)}
-            onClick={() => {
-              setFlyoverPanelOpen(true);
-              setFlyoverLocation('Houston, TX');
-              const now = new Date();
-              const gmst = satellite.gstime(now);
-              const nearby = satellites.filter((sat) => {
-                try {
-                  const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
-                  const posVel = satellite.propagate(satrec, now);
-                  if (!posVel.position || typeof posVel.position === 'boolean') return false;
-                  const geo2 = satellite.eciToGeodetic(posVel.position, gmst);
-                  const satLat = satellite.degreesLat(geo2.latitude);
-                  const satLon = satellite.degreesLong(geo2.longitude);
-                  return Math.abs(satLat - 29.7604) < 12 && Math.abs(satLon - (-95.3698)) < 12;
-                } catch { return false; }
-              });
-              setFlyoverObjects(nearby);
-              setFlyoverCount(nearby.length);
-              if (viewerRef.current?.cesiumElement) {
-                viewerRef.current.cesiumElement.camera.flyTo({
-                  destination: Cartesian3.fromDegrees(-95.3698, 29.7604, 3500000),
-                  duration: 2.5,
-                });
-              }
-            }}
-          >
-            <EllipseGraphics
-              semiMajorAxis={500000.0}
-              semiMinorAxis={500000.0}
-              material={Color.RED.withAlpha(0.2)}
-              outline={true}
-              outlineColor={Color.RED}
+        {/* Celestial Body Entities */}
+        {/* Sun (Origin) */}
+        <Entity position={Cartesian3.ZERO} name="Sun">
+          <EllipsoidGraphics
+            radii={sunRadii}
+            material={Color.YELLOW}
+          />
+        </Entity>
+
+        {/* Earth */}
+        <Entity position={earthPosNow} name="Earth">
+          <EllipsoidGraphics
+            radii={earthRadii}
+            material={Color.DEEPSKYBLUE}
+          />
+        </Entity>
+
+        {/* Mars */}
+        <Entity position={marsPosNow} name="Mars">
+          <EllipsoidGraphics
+            radii={marsRadii}
+            material={Color.ORANGERED}
+          />
+        </Entity>
+
+        {/* Spacecraft (3D Model with warning light) */}
+        <Entity id="spacecraft" position={scPosNow} name="PPO Spacecraft">
+          <ModelGraphics
+            uri="https://raw.githubusercontent.com/CesiumGS/cesium/main/Apps/SampleData/models/Cesium_Satellite/Cesium_Satellite.glb"
+            minimumPixelSize={60}
+            maximumScale={10000}
+          />
+          {isAnomalyActive && (
+            <PointGraphics
+              pixelSize={14}
+              color={Color.RED}
+              outlineColor={Color.WHITE}
+              outlineWidth={1}
             />
-          </Entity>
-
-          <ScreenSpaceEventHandler>
-            <ScreenSpaceEvent
-              type={ScreenSpaceEventType.LEFT_CLICK}
-              action={(movement) => {
-                if (!("position" in movement) || !movement.position) return;
-                const viewer = viewerRef.current?.cesiumElement;
-                if (!viewer) return;
-
-                const picked = viewer.scene.pick(movement.position);
-
-                if (picked && picked.id) {
-                  const sat = satellites.find(s => s.id === picked.id);
-                  if (sat) {
-                    setSelectedSat(sat);
-                    setShowWelcome(false);
-                    viewer.camera.flyTo({
-                      destination: Cartesian3.fromDegrees(
-                        satellite.degreesLong(
-                          satellite.eciToGeodetic(
-                            satellite.propagate(
-                              satellite.twoline2satrec(sat.tle1, sat.tle2),
-                              new Date()
-                            ).position as satellite.EciVec3<number>,
-                            satellite.gstime(new Date())
-                          ).longitude
-                        ),
-                        satellite.degreesLat(
-                          satellite.eciToGeodetic(
-                            satellite.propagate(
-                              satellite.twoline2satrec(sat.tle1, sat.tle2),
-                              new Date()
-                            ).position as satellite.EciVec3<number>,
-                            satellite.gstime(new Date())
-                          ).latitude
-                        ),
-                        sat.altitude * 1000 + 3000000
-                      ),
-                      duration: 1.5,
-                    });
-                  }
-                } else {
-                  setSelectedSat(null);
-                  viewer.camera.flyHome(1.5);
-                }
-              }}
-            />
-          </ScreenSpaceEventHandler>
-
-          {selectedSat && (
-            <Entity position={selectedSat.position}>
-              <PointGraphics pixelSize={12} color={Color.CYAN} />
-            </Entity>
           )}
-        </Viewer>
-        {/* App title */}
-        <div className="absolute top-6 left-6 z-50">
-          <div className="text-white text-lg font-bold tracking-tight">Orbital Watch</div>
-          <div className="text-slate-400 text-xs">Real-time debris risk for your community</div>
+        </Entity>
+      </Viewer>
+
+      {/* Header Overlay */}
+      <div className="absolute top-6 left-6 z-50">
+        <div className="text-white text-lg font-bold tracking-wider flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 shadow-[0_0_10px_#06b6d4]"></span>
+          ARES-1 VISUALIZER
+        </div>
+        <div className="text-slate-400 text-xs mt-0.5 font-mono">Heliocentric PPO Flight Optimization</div>
+      </div>
+
+      {/* Telemetry Dashboard (Left Side Panel) */}
+      <div className="absolute top-24 left-6 w-[360px] z-50 flex flex-col rounded-3xl overflow-hidden"
+           style={{
+             maxHeight: "calc(100vh - 10rem)",
+             background: "linear-gradient(135deg, rgba(15,23,42,0.92) 0%, rgba(0,0,0,0.95) 100%)",
+             backdropFilter: "blur(20px)",
+             border: "1px solid rgba(255,255,255,0.08)",
+             borderTop: isAnomalyActive 
+               ? "1px solid rgba(239,68,68,0.5)" 
+               : "1px solid rgba(6,182,212,0.4)",
+             boxShadow: "0 20px 50px rgba(0,0,0,0.8)",
+             color: "white"
+           }}>
+        
+        {/* Header */}
+        <div className="p-6 pb-3 shrink-0 border-b border-white/5">
+          <span className="uppercase tracking-[0.2em] text-[10px] font-bold text-cyan-400">Flight Telemetry</span>
+          <h2 className="text-xl font-light tracking-tight mt-1">Autonomous Spacecraft</h2>
+          
+          {/* Status Badge */}
+          <div className="mt-3">
+            {isCatastrophic ? (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 text-xs font-semibold">
+                <AlertTriangle size={14} className="animate-pulse" />
+                <span>CATASTROPHIC DEGRADATION (Isp = 1514.7s)</span>
+              </div>
+            ) : isAnomalyActive ? (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-orange-500/30 bg-orange-500/10 text-orange-400 text-xs font-semibold">
+                <AlertTriangle size={14} className="animate-pulse" />
+                <span>ISOLATION FOREST ANOMALY FLAGGED</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-xs font-semibold">
+                <CheckCircle2 size={14} />
+                <span>NOMINAL OPERATIONS</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* ✅ Toolbar — overlaid on top via z-index */}
-        <div className="absolute top-6 right-6 z-50 flex gap-4 bg-slate-900/80 backdrop-blur-md p-2 rounded-lg border border-slate-700 shadow-2xl">
-          <button
-            onClick={() => setFilter("all")}
-            className={`px-4 py-2 rounded ${filter === "all" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
+        {/* Dashboard Content */}
+        <div className="overflow-y-auto p-6 space-y-5" style={{ flex: 1 }}>
+          
+          {/* MET Card */}
+          <div className="p-4 rounded-2xl bg-white/5 border border-white/5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Clock size={18} className="text-cyan-400" />
+              <div>
+                <div className="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Mission Elapsed Time</div>
+                <div className="text-sm font-semibold font-mono text-white">Day {currentDay} / Hr {currentHour}</div>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono text-slate-400">Total: 11,040h</span>
+          </div>
+
+          {/* Specific Impulse Progress */}
+          <div className="space-y-2">
+            <div className="flex justify-between items-center text-xs">
+              <div className="flex items-center gap-2 text-slate-400">
+                <Gauge size={14} className="text-indigo-400" />
+                <span className="uppercase tracking-wider font-semibold">Specific Impulse (Isp)</span>
+              </div>
+              <span className="font-mono text-indigo-400 font-semibold">{ispVal.toFixed(1)} s</span>
+            </div>
+            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] transition-all duration-300"
+                style={{ width: `${((ispVal - 1514.7) / (1782 - 1514.7)) * 100}%` }}
+              ></div>
+            </div>
+            <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+              <span>Limit: 1514.7s</span>
+              <span>Nominal: 1782.0s</span>
+            </div>
+          </div>
+
+          {/* Propellant Progress */}
+          <div className="space-y-2">
+            <div className="flex justify-between items-center text-xs">
+              <div className="flex items-center gap-2 text-slate-400">
+                <Fuel size={14} className="text-emerald-400" />
+                <span className="uppercase tracking-wider font-semibold">Propellant Mass</span>
+              </div>
+              <span className="font-mono text-emerald-400 font-semibold">{fuelRemaining.toFixed(1)} kg</span>
+            </div>
+            <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all"
+                style={{ width: `${(fuelRemaining / 1099.0) * 100}%` }}
+              ></div>
+            </div>
+            <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+              <span>Dry Mass: 1648kg</span>
+              <span>Initial: 1099kg</span>
+            </div>
+          </div>
+
+          {/* Thrust Level Card */}
+          <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-3">
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Thrust Command</span>
+              <span className="text-xs font-mono font-semibold text-cyan-400">
+                {((thrustVal / 0.289) * 100).toFixed(1)}% ({thrustVal.toFixed(3)} N)
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${thrustVal > 0.005 ? "bg-amber-400 animate-pulse" : "bg-slate-600"}`}></span>
+                <span className="text-xs text-slate-300">{thrustVal > 0.005 ? "PPO ACTIVE BURN" : "BALLISTIC COASTING"}</span>
+              </div>
+              <span className="text-[9px] text-slate-500 font-mono">Max: 0.289 N</span>
+            </div>
+          </div>
+
+          {/* Planetary Distance Stats */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-center">
+              <div className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Dist to Mars</div>
+              <div className="text-sm font-bold text-red-400 mt-1 font-mono">{(marsDistKm / 1e6).toFixed(2)}M km</div>
+            </div>
+            <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-center">
+              <div className="text-[9px] uppercase tracking-wider text-slate-500 font-semibold">Dist to Sun</div>
+              <div className="text-sm font-bold text-amber-400 mt-1 font-mono">{(sunDistKm / 1e6).toFixed(2)}M km</div>
+            </div>
+          </div>
+
+          {/* Guidance Console */}
+          <div className="p-4 rounded-2xl bg-black/40 border border-white/5 space-y-2">
+            <div className="text-[9px] uppercase text-slate-500 font-bold tracking-wider flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_#22d3ee]"></span>
+              PPO Guidance & Control Log
+            </div>
+            <div className="h-32 overflow-y-auto font-mono text-[9px] text-slate-300 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+              {logs.map((log, idx) => (
+                <div key={idx} className="leading-relaxed">
+                  {log.includes('🚀') || log.includes('🎯') ? (
+                    <span className="text-cyan-300">{log}</span>
+                  ) : log.includes('⚠️') ? (
+                    <span className="text-amber-400">{log}</span>
+                  ) : log.includes('🚨') || log.includes('💥') ? (
+                    <span className="text-red-400 font-semibold">{log}</span>
+                  ) : log.includes('⚡') ? (
+                    <span className="text-amber-300">{log}</span>
+                  ) : (
+                    <span>{log}</span>
+                  )}
+                </div>
+              ))}
+              <div ref={consoleEndRef} />
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* Guide Box */}
+      {showGuide && (
+        <div 
+          onClick={() => setShowGuide(false)}
+          className="absolute bottom-28 left-6 z-50 bg-slate-950/95 border border-slate-800 text-white text-xs px-5 py-4 rounded-2xl max-w-[320px] shadow-2xl cursor-pointer"
+        >
+          <div className="text-sm font-semibold mb-1 text-cyan-400 flex items-center gap-1.5">
+            <HelpCircle size={15} />
+            Heliocentric Path Navigation
+          </div>
+          <div className="text-slate-400 leading-relaxed">
+            - **Yellow Center**: Sun<br />
+            - **Blue Loop**: Earth Orbit<br />
+            - **Red Loop**: Mars Orbit<br />
+            - **Cyan Line**: RL Spacecraft Path (turns red when degradation starts).
+          </div>
+          <div className="text-slate-600 text-[10px] mt-2 text-right">tap to dismiss</div>
+        </div>
+      )}
+
+      {/* Animation Controls (Bottom Center Panel) */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-3 bg-slate-950/90 border border-slate-800/80 p-4 rounded-3xl shadow-2xl backdrop-blur-md min-w-[500px] max-w-[90vw]">
+        
+        {/* Interactive Event Timeline */}
+        <div className="relative w-full h-8 flex items-center px-1.5 border-b border-white/5 pb-2.5">
+          <div className="absolute left-1.5 right-1.5 h-0.5 bg-slate-800"></div>
+          
+          {/* Milestone 1: Earth Launch */}
+          <button 
+            onClick={() => { setAnimationStep(0); setIsAnimating(false); }}
+            className="absolute flex flex-col items-center -translate-x-1/2 group"
+            style={{ left: "1.5%" }}
           >
-            View All
+            <span className={`w-2.5 h-2.5 rounded-full border border-white/20 transition-all ${animationStep >= 0 ? "bg-emerald-500 shadow-[0_0_8px_#10b981]" : "bg-slate-700"}`}></span>
+            <span className="text-[8px] text-slate-400 group-hover:text-white mt-1.5 font-mono transition-colors">Launch (0h)</span>
           </button>
-          <button
-            onClick={() => setFilter("active")}
-            className={`px-4 py-2 rounded flex items-center gap-2 ${filter === "active" ? "bg-white text-black" : "text-slate-400 hover:text-white"}`}
+          
+          {/* Milestone 2: Isp Decay Start */}
+          <button 
+            onClick={() => { setAnimationStep(100); setIsAnimating(false); }}
+            className="absolute flex flex-col items-center -translate-x-1/2 group"
+            style={{ left: "10.5%" }}
           >
-            <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
-            Active Payloads
+            <span className={`w-2.5 h-2.5 rounded-full border border-white/20 transition-all ${animationStep >= 100 ? "bg-amber-500 shadow-[0_0_8px_#f59e0b]" : "bg-slate-700"}`}></span>
+            <span className="text-[8px] text-slate-400 group-hover:text-white mt-1.5 font-mono transition-colors">Decay (1000h)</span>
           </button>
-          <button
-            onClick={() => setFilter("debris")}
-            className={`px-4 py-2 rounded flex items-center gap-2 ${filter === "debris" ? "bg-red-600 text-white" : "text-slate-400 hover:text-white"}`}
+          
+          {/* Milestone 3: Anomaly & Failure */}
+          <button 
+            onClick={() => { setAnimationStep(150); setIsAnimating(false); }}
+            className="absolute flex flex-col items-center -translate-x-1/2 group"
+            style={{ left: "15.0%" }}
           >
-            <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,1)]"></span>
-            Space Debris
+            <span className={`w-2.5 h-2.5 rounded-full border border-white/20 transition-all ${animationStep >= 150 ? "bg-red-500 shadow-[0_0_8px_#ef4444]" : "bg-slate-700"}`}></span>
+            <span className="text-[8px] text-slate-400 group-hover:text-white mt-1.5 font-mono transition-colors">Failure (1500h)</span>
           </button>
+          
+          {/* Milestone 4: Mars Intercept */}
+          <button 
+            onClick={() => { setAnimationStep(trajectoryData.steps.length - 1); setIsAnimating(false); }}
+            className="absolute flex flex-col items-center -translate-x-1/2 group"
+            style={{ left: "98.5%" }}
+          >
+            <span className={`w-2.5 h-2.5 rounded-full border border-white/20 transition-all ${animationStep >= trajectoryData.steps.length - 1 ? "bg-indigo-500 shadow-[0_0_8px_#6366f1]" : "bg-slate-700"}`}></span>
+            <span className="text-[8px] text-slate-400 group-hover:text-white mt-1.5 font-mono transition-colors">Arrival (11040h)</span>
+          </button>
+        </div>
+
+        {/* Scrubber and Step Count */}
+        <div className="w-full flex items-center justify-between gap-4">
+          <input
+            type="range"
+            min={0}
+            max={trajectoryData.steps.length - 1}
+            value={animationStep}
+            onChange={(e) => {
+              setAnimationStep(parseInt(e.target.value));
+              setIsAnimating(false); // pause on scrubbing
+            }}
+            className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-500 focus:outline-none"
+          />
+          <span className="text-[10px] font-mono text-slate-400 min-w-[60px] text-right">
+            Hr {currentHour}
+          </span>
+        </div>
+
+        {/* Buttons Row */}
+        <div className="w-full flex items-center justify-between mt-1">
           <div className="flex items-center gap-2">
-            <input
-              id="zip-input"
-              type="text"
-              maxLength={5}
-              placeholder="ZIP code..."
-              className="w-24 px-2 py-2 rounded bg-slate-800 text-white text-sm border border-slate-600 focus:outline-none focus:border-amber-500"
-              onKeyDown={(e) => { if (e.key === 'Enter') handleFlyover(); }}
-            />
             <button
-              onClick={handleFlyover}
-              className="px-4 py-2 rounded bg-amber-600/20 text-amber-500 border border-amber-600/50 hover:bg-amber-600 hover:text-white transition-all font-bold whitespace-nowrap"
+              onClick={() => {
+                setAnimationStep(0);
+                setIsAnimating(false);
+              }}
+              className="p-2 bg-slate-900 border border-white/10 hover:border-white/20 rounded-xl transition-all hover:bg-slate-800"
+              title="Reset Timeline"
             >
-              Flyover
+              <RotateCcw size={16} className="text-slate-400 hover:text-white" />
+            </button>
+            <button
+              onClick={() => setIsAnimating(!isAnimating)}
+              className={`p-2 rounded-xl transition-all font-semibold flex items-center justify-center ${
+                isAnimating 
+                  ? "bg-amber-600 text-white shadow-lg shadow-amber-500/20" 
+                  : "bg-cyan-600 text-white shadow-lg shadow-cyan-500/20 hover:bg-cyan-500"
+              }`}
+              style={{ width: "38px" }}
+              title={isAnimating ? "Pause" : "Play"}
+            >
+              {isAnimating ? <Pause size={16} /> : <Play size={16} />}
             </button>
           </div>
+
+          {/* Camera Follow Toggle */}
+          <button
+            onClick={() => setTrackSC(!trackSC)}
+            className={`px-4 py-2 rounded-xl border text-xs font-semibold flex items-center gap-2 transition-all ${
+              trackSC 
+                ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/50" 
+                : "bg-slate-900 text-slate-400 border-white/10 hover:border-white/20 hover:text-white"
+            }`}
+          >
+            <Crosshair size={14} />
+            {trackSC ? "Lock Camera: Spacecraft" : "Free Camera"}
+          </button>
         </div>
 
-        {showWelcome && (
-          <div
-            onClick={() => setShowWelcome(false)}
-            className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 border border-slate-700 text-white text-sm px-6 py-4 rounded-2xl text-center max-w-sm cursor-pointer"
-          >
-            <div className="text-base font-semibold mb-1">27,000+ objects orbit Earth right now</div>
-            <div className="text-slate-400 text-xs mb-2">White = active satellites · Red = space debris</div>
-            <div className="text-slate-500 text-xs">Enter your ZIP code above or click the Texas circle to see what's above you</div>
-            <div className="text-slate-600 text-[10px] mt-2">tap anywhere to dismiss</div>
-          </div>
-        )}
-
-        {/* ✅ Flyover count badge */}
-        {flyoverCount !== null && (
-          <div className="absolute top-20 right-6 z-50 bg-slate-900/90 text-amber-400 text-xs px-4 py-2 rounded-lg border border-amber-600/40">
-            {flyoverCount} objects currently near this location
-          </div>
-        )}
-
-        {/* ✅ Flyover info sidebar */}
-        <AnimatePresence>
-          {flyoverPanelOpen && (
-            <motion.div
-              initial={{ opacity: 0, x: -60, filter: "blur(10px)" }}
-              animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
-              exit={{ opacity: 0, x: -40, filter: "blur(10px)" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="absolute top-24 left-3 w-[360px] z-50 flex flex-col rounded-3xl overflow-hidden"
-              style={{
-                maxHeight: 'calc(100vh - 8rem)',
-                background: "linear-gradient(135deg, rgba(15,23,42,0.96) 0%, rgba(0,0,0,0.97) 100%)",
-                backdropFilter: "blur(20px)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                borderTop: "1px solid rgba(239,68,68,0.4)",
-                boxShadow: "0 20px 50px rgba(0,0,0,0.8)",
-                color: "white"
-              }}
-            >
-              {/* Fixed header */}
-              <div className="p-6 pb-3 shrink-0">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <span className="uppercase tracking-[0.3em] text-[10px] font-bold text-red-400">Live Overhead Scan</span>
-                    <h2 className="text-xl font-light tracking-tight mt-1">
-                      {flyoverLocation ?? 'Houston Zone'}
-                    </h2>
-                  </div>
-                  <button
-                    onClick={() => setFlyoverPanelOpen(false)}
-                    className="p-1 hover:bg-slate-800 rounded-full transition-colors"
-                  >
-                    <X size={18} className="text-slate-400 hover:text-white" />
-                  </button>
-                </div>
-
-                {/* Risk score */}
-                {flyoverObjects.length > 0 && (() => {
-                  const debrisCount = flyoverObjects.filter(s => s.type === 'debris').length;
-                  const debrisRatio = debrisCount / flyoverObjects.length;
-                  const riskLevel = debrisRatio > 0.5 ? 'HIGH' : debrisRatio > 0.25 ? 'MODERATE' : 'LOW';
-                  const riskColor = riskLevel === 'HIGH' ? 'text-red-400 border-red-500/30 bg-red-500/10'
-                    : riskLevel === 'MODERATE' ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
-                      : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
-                  return (
-                    <div className={`flex items-center justify-between p-3 rounded-xl border mb-3 ${riskColor}`}>
-                      <div>
-                        <div className="text-[10px] uppercase tracking-widest font-bold mb-0.5">Debris Risk Level</div>
-                        <div className="text-lg font-bold">{riskLevel}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold">{flyoverObjects.length}</div>
-                        <div className="text-[10px] uppercase tracking-widest">objects overhead</div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Stats row */}
-                {flyoverObjects.length > 0 && (
-                  <div className="grid grid-cols-3 gap-2 mb-3">
-                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
-                      <div className="text-sm font-bold text-white">
-                        {flyoverObjects.filter(s => s.type === 'active').length}
-                      </div>
-                      <div className="text-[9px] uppercase tracking-wider text-slate-400">Active</div>
-                    </div>
-                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
-                      <div className="text-sm font-bold text-red-400">
-                        {flyoverObjects.filter(s => s.type === 'debris').length}
-                      </div>
-                      <div className="text-[9px] uppercase tracking-wider text-slate-400">Debris</div>
-                    </div>
-                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-center">
-                      <div className="text-sm font-bold text-cyan-400">
-                        {flyoverObjects.length > 0
-                          ? Math.round(flyoverObjects.reduce((a, s) => a + s.altitude, 0) / flyoverObjects.length)
-                          : 0} km
-                      </div>
-                      <div className="text-[9px] uppercase tracking-wider text-slate-400">Avg Alt</div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1 px-1">
-                  Objects — sorted by altitude
-                </div>
-              </div>
-
-              {/* Scrollable satellite list */}
-              <div className="overflow-y-auto px-6 pb-6 space-y-2" style={{ flex: 1 }}>
-                {flyoverObjects.length === 0 && (
-                  <div className="text-center text-slate-500 text-xs py-8">No objects detected overhead</div>
-                )}
-                {flyoverObjects
-                  .slice()
-                  .sort((a, b) => a.altitude - b.altitude)
-                  .map((sat) => (
-                    <div
-                      key={sat.id}
-                      onClick={() => {
-                        setSelectedSat(sat);
-                        setFlyoverPanelOpen(false);
-                        if (viewerRef.current?.cesiumElement) {
-                          viewerRef.current.cesiumElement.camera.flyTo({
-                            destination: Cartesian3.fromDegrees(
-                              satellite.degreesLong(
-                                satellite.eciToGeodetic(
-                                  satellite.propagate(
-                                    satellite.twoline2satrec(sat.tle1, sat.tle2), new Date()
-                                  ).position as satellite.EciVec3<number>,
-                                  satellite.gstime(new Date())
-                                ).longitude
-                              ),
-                              satellite.degreesLat(
-                                satellite.eciToGeodetic(
-                                  satellite.propagate(
-                                    satellite.twoline2satrec(sat.tle1, sat.tle2), new Date()
-                                  ).position as satellite.EciVec3<number>,
-                                  satellite.gstime(new Date())
-                                ).latitude
-                              ),
-                              sat.altitude * 1000 + 3000000
-                            ),
-                            duration: 1.5,
-                          });
-                        }
-                      }}
-                      className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 hover:border-white/20 transition-all group"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className={`w-2 h-2 rounded-full shrink-0 ${sat.type === 'debris' ? 'bg-red-500' : 'bg-white'}`} />
-                        <span className="text-xs text-slate-200 truncate group-hover:text-white transition-colors">
-                          {sat.name}
-                        </span>
-                      </div>
-                      <div className="text-right shrink-0 ml-2">
-                        <div className="text-xs font-mono text-cyan-400">{Math.round(sat.altitude)} km</div>
-                        <div className="text-[9px] text-slate-500">{sat.velocity.toFixed(1)} km/s</div>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ✅ Satellite detail panel */}
-        <AnimatePresence>
-          {selectedSat && (
-            <motion.div
-              initial={{ opacity: 0, x: 100, filter: "blur(10px)" }}
-              animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
-              exit={{ opacity: 0, x: 50, filter: "blur(10px)" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="absolute top-4 left-3 bottom-4 w-[400px] z-50 flex flex-col p-8 overflow-y-auto rounded-3xl"
-              style={{
-                background: "linear-gradient(135deg, rgba(15, 23, 42, 0.8) 0%, rgba(0, 0, 0, 0.9) 100%)",
-                backdropFilter: "blur(20px)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                borderTop: "1px solid rgba(0, 255, 204, 0.3)",
-                boxShadow: "0 20px 50px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.1)",
-                color: "white"
-              }}
-            >
-              <div className="flex justify-between items-start mb-10">
-                <div className="flex flex-col">
-                  <span className="uppercase tracking-[0.3em] text-[10px] font-bold text-cyan-400 mb-1">Target Locked</span>
-                  <span className="text-gray-400 text-xs font-mono">NORAD ID: {selectedSat.name.split(' ')[selectedSat.name.split(' ').length - 1] || 'UNKNOWN'}</span>
-                </div>
-                <button
-                  onClick={() => {
-                    setSelectedSat(null);
-                    if (viewerRef.current?.cesiumElement) {
-                      viewerRef.current.cesiumElement.camera.flyHome(1.5);
-                    }
-                  }}
-                  className="p-1 hover:bg-slate-800 rounded-full transition-colors"
-                >
-                  <X size={20} className="text-slate-400 hover:text-white" />
-                </button>
-              </div>
-              <h2 className="text-3xl font-light tracking-tight mb-2 pr-4">{selectedSat.name}</h2>
-              <div className="flex items-center space-x-3 mb-10 border-b border-white/5 pb-6">
-                <div className="w-2 h-2 rounded-full bg-red-500 animate-ping shadow-[0_0_15px_rgba(239,68,68,1)]"></div>
-                <span className="text-xs text-red-400 uppercase tracking-widest font-semibold">Active Telemetry</span>
-              </div>
-              <div className="space-y-6 mb-10">
-                <div className="flex flex-col">
-                  <div className="flex justify-between items-center mb-2 text-gray-400">
-                    <div className="flex items-center space-x-2">
-                      <Activity size={16} className="text-cyan-500" />
-                      <span className="text-xs uppercase tracking-widest font-semibold">Velocity</span>
-                    </div>
-                    <span className="text-sm font-mono text-cyan-400">{selectedSat.velocity.toFixed(2)} km/s</span>
-                  </div>
-                  <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${Math.min((selectedSat.velocity / 10) * 100, 100)}%` }}
-                      transition={{ duration: 1, delay: 0.2 }}
-                      className="h-full bg-cyan-400 shadow-[0_0_10px_#00ffcc]"
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-col">
-                  <div className="flex justify-between items-center mb-2 text-gray-400">
-                    <div className="flex items-center space-x-2">
-                      <Mountain size={16} className="text-emerald-500" />
-                      <span className="text-xs uppercase tracking-widest font-semibold">Altitude</span>
-                    </div>
-                    <span className="text-sm font-mono text-emerald-400">{selectedSat.altitude.toFixed(2)} km</span>
-                  </div>
-                  <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${Math.min((selectedSat.altitude / 1000) * 100, 100)}%` }}
-                      transition={{ duration: 1, delay: 0.4 }}
-                      className="h-full bg-emerald-400 shadow-[0_0_10px_#34d399]"
-                    />
-                  </div>
-                </div>
-              </div>
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.6 }}
-                style={{ background: "rgba(99, 102, 241, 0.05)", border: "1px solid rgba(99, 102, 241, 0.1)" }}
-                className="p-6 rounded-2xl mt-auto relative overflow-hidden"
-              >
-                <div className="absolute top-0 left-0 w-32 h-32 bg-indigo-500/10 blur-3xl rounded-full"></div>
-                <div className="flex items-center space-x-2 mb-3 text-indigo-400 relative z-10">
-                  <ShieldAlert size={18} />
-                  <h3 className="text-xs font-bold uppercase tracking-[0.2em]">Community Impact</h3>
-                </div>
-                <p className="text-xs text-indigo-100/60 leading-relaxed font-light relative z-10">
-                  {getImpactText(selectedSat)}
-                </p>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ✅ Info drawer button */}
-        <button
-          onClick={() => setDrawerOpen(o => !o)}
-          className="absolute bottom-6 right-6 z-50 px-4 py-2 rounded-full bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600 hover:text-white transition-all text-sm font-semibold"
-        >
-          {drawerOpen ? '✕ Close' : '📡 Why This Matters'}
-        </button>
-
-        {/* ✅ Info drawer */}
-        <AnimatePresence>
-          {drawerOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: 40 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 40 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 220 }}
-              className="absolute bottom-20 right-6 z-50 w-80 rounded-2xl overflow-y-auto max-h-[70vh]"
-              style={{
-                background: 'linear-gradient(135deg, rgba(15,23,42,0.95), rgba(0,0,0,0.98))',
-                border: '1px solid rgba(99,102,241,0.2)',
-                boxShadow: '0 20px 50px rgba(0,0,0,0.8)',
-                color: 'white',
-                padding: '1.5rem',
-              }}
-            >
-              <h2 className="text-lg font-bold text-indigo-300 mb-1">Space Debris Crisis</h2>
-              <p className="text-xs text-slate-400 mb-4">Why Congress needs to act now</p>
-              <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                  <span className="text-amber-400 font-bold block mb-1">27,000+</span>
-                  Tracked objects in orbit — defunct satellites, rocket stages, and collision fragments.
-                </div>
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                  <span className="text-red-400 font-bold block mb-1">Kessler Syndrome</span>
-                  One major collision can trigger a cascade, rendering entire orbital shells permanently unusable.
-                </div>
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                  <span className="text-cyan-400 font-bold block mb-1">Houston's Stake</span>
-                  NASA JSC, energy sector satellite comms, and emergency weather systems all depend on a clean orbital environment.
-                </div>
-                <div className="p-3 rounded-xl bg-indigo-900/30 border border-indigo-500/30">
-                  <span className="text-indigo-300 font-bold block mb-1">What Congress Can Do</span>
-                  Mandate deorbit standards, fund active debris removal, and ratify orbital traffic management treaties.
-                </div>
-              </div>
-
-              <a
-                href="https://www.congress.gov"
-                target="_blank"
-                rel="noreferrer"
-                className="block mt-4 text-center py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all"
-              >
-                📜 Contact Your Representative →
-              </a>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
       </div>
-    </CesiumErrorBoundary >
+    </div>
   );
 }
