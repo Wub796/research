@@ -23,7 +23,8 @@ import {
   Cartesian3, 
   Cartesian2,
   Color, 
-  Math as CesiumMath 
+  Math as CesiumMath,
+  ArcType
 } from "cesium";
 import { 
   CesiumComponentRef, 
@@ -356,6 +357,7 @@ export default function Globe() {
             positions={earthPositions}
             width={1.5}
             material={Color.BLUE.withAlpha(0.25)}
+            arcType={ArcType.NONE}
           />
         </Entity>
         <Entity>
@@ -363,6 +365,7 @@ export default function Globe() {
             positions={marsPositions}
             width={1.5}
             material={Color.RED.withAlpha(0.25)}
+            arcType={ArcType.NONE}
           />
         </Entity>
         <Entity>
@@ -370,6 +373,7 @@ export default function Globe() {
             positions={scPositions}
             width={2.5}
             material={isAnomalyActive ? Color.GOLDENROD : Color.CYAN}
+            arcType={ArcType.NONE}
           />
         </Entity>
 
@@ -431,7 +435,7 @@ export default function Globe() {
         {/* Spacecraft (3D Model with warning light) */}
         <Entity id="spacecraft" position={scPosNow} name="PPO Spacecraft">
           <ModelGraphics
-            uri="https://raw.githubusercontent.com/CesiumGS/cesium/main/Apps/SampleData/models/Cesium_Satellite/Cesium_Satellite.glb"
+            uri="https://raw.githubusercontent.com/CesiumGS/cesium/main/Apps/SampleData/models/CesiumSatellite/CesiumSatellite.glb"
             minimumPixelSize={60}
             maximumScale={10000}
           />
