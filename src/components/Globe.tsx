@@ -52,7 +52,7 @@ export default function Globe() {
   const [trajectoryData, setTrajectoryData] = useState<any | null>(null);
   const [animationStep, setAnimationStep] = useState<number>(0);
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
-  const [trackSC, setTrackSC] = useState<boolean>(true);
+  const [trackSC, setTrackSC] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [activeRightTab, setActiveRightTab] = useState<"console" | "trajectory" | "isp" | "thrust">("console");
   const [zoomPlot, setZoomPlot] = useState<string | null>(null);
@@ -191,7 +191,7 @@ export default function Globe() {
   // 5. Dynamic Camera Tracking of the Spacecraft Entity
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement;
-    if (!viewer || !ready || !trajectoryData) return;
+    if (!viewer || !ready) return;
 
     if (trackSC) {
       const entity = viewer.entities.getById("spacecraft");
@@ -201,7 +201,7 @@ export default function Globe() {
     } else {
       viewer.trackedEntity = undefined;
     }
-  }, [trackSC, animationStep, ready, trajectoryData]);
+  }, [trackSC, ready]);
 
   if (!ready || !trajectoryData) {
     return (
