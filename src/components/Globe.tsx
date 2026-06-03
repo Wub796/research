@@ -327,12 +327,29 @@ export default function Globe() {
     return "bg-indigo-500 shadow-[0_0_10px_#6366f1]";
   };
 
+  const getProgressBarWidth = () => {
+    if (currentHour === 0) return 10;
+    if (currentHour <= 1000) {
+      return 10 + (currentHour / 1000) * 20;
+    }
+    if (currentHour <= 1497) {
+      return 30 + ((currentHour - 1000) / 497) * 20;
+    }
+    if (currentHour <= 1500) {
+      return 50 + ((currentHour - 1497) / 3) * 20;
+    }
+    if (currentHour <= 11040) {
+      return 70 + ((currentHour - 1500) / 9540) * 20;
+    }
+    return 90;
+  };
+
   const milestones = [
-    { name: "Launch", hour: 0, label: "Launch (0h)", color: "emerald", style: { left: "2%" } },
-    { name: "Decay", hour: 1000, label: "Decay (1000h)", color: "amber", style: { left: "10.5%" } },
-    { name: "Anomaly", hour: 1497, label: "Anomaly (1497h)", color: "rose", style: { left: "14%" } },
-    { name: "Failure", hour: 1500, label: "Failure (1500h)", color: "red", style: { left: "16%" } },
-    { name: "Arrival", hour: 11040, label: "Arrival (11040h)", color: "indigo", style: { left: "98%" } },
+    { name: "Launch", hour: 0, label: "Launch (0h)", color: "emerald", style: { left: "10%" } },
+    { name: "Decay", hour: 1000, label: "Decay (1000h)", color: "amber", style: { left: "30%" } },
+    { name: "Anomaly", hour: 1497, label: "Anomaly (1497h)", color: "rose", style: { left: "50%" } },
+    { name: "Failure", hour: 1500, label: "Failure (1500h)", color: "red", style: { left: "70%" } },
+    { name: "Arrival", hour: 11040, label: "Arrival (11040h)", color: "indigo", style: { left: "90%" } },
   ];
 
   return (
@@ -880,7 +897,7 @@ export default function Globe() {
           {/* Active Gradient Progress Track */}
           <div 
             className="absolute left-4 h-[3px] bg-gradient-to-r from-emerald-500 via-amber-500 to-indigo-500 rounded-full shadow-[0_0_8px_rgba(99,102,241,0.6)] transition-all duration-300"
-            style={{ width: `${Math.min(97.0, (currentHour / 11040) * 97.0)}%` }}
+            style={{ width: `${getProgressBarWidth()}%` }}
           ></div>
           
           {/* Render Milestones */}
