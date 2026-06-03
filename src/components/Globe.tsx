@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Viewer as CesiumViewer, 
   Cartesian3, 
+  Cartesian2,
   Color, 
   Math as CesiumMath 
 } from "cesium";
@@ -27,8 +28,8 @@ import {
   Entity, 
   PointGraphics, 
   PolylineGraphics, 
-  EllipsoidGraphics,
-  ModelGraphics
+  ModelGraphics,
+  LabelGraphics
 } from "resium";
 
 interface TrajectoryPoint {
@@ -222,10 +223,7 @@ export default function Globe() {
     (marsPosKm[2] - scPosKm[2])**2
   );
 
-  // Scaled radii for planetary bodies (in meters) for visible display at astronomical scales
-  const sunRadii = new Cartesian3(1.4e10, 1.4e10, 1.4e10);
-  const earthRadii = new Cartesian3(6.5e9, 6.5e9, 6.5e9);
-  const marsRadii = new Cartesian3(5.5e9, 5.5e9, 5.5e9);
+
 
   return (
     <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", overflow: "hidden" }}>
@@ -268,25 +266,55 @@ export default function Globe() {
         {/* Celestial Body Entities */}
         {/* Sun (Origin) */}
         <Entity position={Cartesian3.ZERO} name="Sun">
-          <EllipsoidGraphics
-            radii={sunRadii}
-            material={Color.YELLOW}
+          <PointGraphics 
+            pixelSize={24} 
+            color={Color.YELLOW} 
+            outlineColor={Color.ORANGE} 
+            outlineWidth={2} 
+          />
+          <LabelGraphics 
+            text="Sun" 
+            font="10px monospace" 
+            fillColor={Color.WHITE} 
+            showBackground={true} 
+            backgroundColor={Color.BLACK.withAlpha(0.6)} 
+            pixelOffset={new Cartesian2(0, -18)} 
           />
         </Entity>
 
         {/* Earth */}
         <Entity position={earthPosNow} name="Earth">
-          <EllipsoidGraphics
-            radii={earthRadii}
-            material={Color.DEEPSKYBLUE}
+          <PointGraphics 
+            pixelSize={14} 
+            color={Color.DEEPSKYBLUE} 
+            outlineColor={Color.WHITE} 
+            outlineWidth={1} 
+          />
+          <LabelGraphics 
+            text="Earth" 
+            font="10px monospace" 
+            fillColor={Color.WHITE} 
+            showBackground={true} 
+            backgroundColor={Color.BLACK.withAlpha(0.6)} 
+            pixelOffset={new Cartesian2(0, -15)} 
           />
         </Entity>
 
         {/* Mars */}
         <Entity position={marsPosNow} name="Mars">
-          <EllipsoidGraphics
-            radii={marsRadii}
-            material={Color.ORANGERED}
+          <PointGraphics 
+            pixelSize={12} 
+            color={Color.ORANGERED} 
+            outlineColor={Color.WHITE} 
+            outlineWidth={1} 
+          />
+          <LabelGraphics 
+            text="Mars" 
+            font="10px monospace" 
+            fillColor={Color.WHITE} 
+            showBackground={true} 
+            backgroundColor={Color.BLACK.withAlpha(0.6)} 
+            pixelOffset={new Cartesian2(0, -15)} 
           />
         </Entity>
 
