@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { ReactLenis, type LenisRef } from "lenis/react";
 import { 
   Play, 
   Pause, 
@@ -24,7 +25,10 @@ import {
   Cartesian2,
   Color, 
   Math as CesiumMath,
-  ArcType
+  ArcType,
+  HeadingPitchRange,
+  Matrix4,
+  ScreenSpaceEventType
 } from "cesium";
 import { 
   CesiumComponentRef, 
@@ -32,7 +36,7 @@ import {
   Entity, 
   PointGraphics, 
   PolylineGraphics, 
-  ModelGraphics,
+  EllipsoidGraphics,
   LabelGraphics
 } from "resium";
 
@@ -47,19 +51,104 @@ interface TrajectoryPoint {
   anomaly: boolean;
 }
 
+// Portfolio-style boot sequence: percentage counter + fill bar, waits for the
+// scene, then fades out. Mirrors the "shutter kif." boot (crawl to 96, release).
+function BootScreen({ done }: { done: boolean }) {
+  const [pct, setPct] = useState(0);
+
+  useEffect(() => {
+    if (done) {
+      setPct(100);
+      return;
+    }
+    const iv = setInterval(() => {
+      setPct((p) => Math.min(96, p + Math.max(1, Math.round((96 - p) * 0.16))));
+    }, 70);
+    return () => clearInterval(iv);
+  }, [done]);
+
+  return (
+    <div className={`boot ${done ? "is-done" : ""}`} role="status" aria-label="Loading">
+      <p className="boot__word">
+        ARES<em>1.</em>
+      </p>
+      <div className="boot__bar">
+        <span style={{ width: `${pct}%` }} />
+      </div>
+      <div className="boot__pct">{String(Math.round(pct)).padStart(3, "0")}</div>
+      <div className="boot__line">PPO guidance · trajectory scheduler</div>
+    </div>
+  );
+}
+
 export default function Globe() {
   const [ready, setReady] = useState(false);
   const [trajectoryData, setTrajectoryData] = useState<any | null>(null);
   const [animationStep, setAnimationStep] = useState<number>(0);
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
   const [trackSC, setTrackSC] = useState<boolean>(false);
+  // Which celestial body (if any) the camera should continuously follow:
+  // "sun" | "earth" | "mars" | null. Unlike the one-shot focus buttons,
+  // tracking keeps the body centered as the simulation advances.
+  const [trackBody, setTrackBody] = useState<string | null>(null);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [activeRightTab, setActiveRightTab] = useState<"console" | "trajectory" | "isp" | "thrust">("console");
   const [zoomPlot, setZoomPlot] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState<boolean>(true);
+  // Portfolio signatures: invert flips the whole console light/dark via CSS
+  // tokens; showBoot keeps the boot screen up briefly after assets arrive.
+  const [inverted, setInverted] = useState<boolean>(false);
+  const [soundOn, setSoundOn] = useState<boolean>(false);
+  const [showBoot, setShowBoot] = useState<boolean>(true);
+  // Scroll progress (0→1) and current section (1 hero, 2 stats, 3 console)
+  const [scrollPct, setScrollPct] = useState<number>(0);
+  const [sectionIdx, setSectionIdx] = useState<number>(1);
   
   const viewerRef = useRef<CesiumComponentRef<CesiumViewer>>(null);
   const consoleEndRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lenisRef = useRef<LenisRef>(null);
+
+  // Scroll FX refs — hero parallax layers
+  const heroRef = useRef<HTMLElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const metaRef = useRef<HTMLDivElement | null>(null);
+
+  // User-interaction guard: while the visitor drags/zooms the camera, the
+  // auto-framing camera stands down so the view never fights their hand.
+  const userInteractingRef = useRef(false);
+  const interactionTimerRef = useRef<number | null>(null);
+
+  // Invert: flip the B&W design tokens on <html> (like the portfolio's
+  // body.is-invert). Every surface and cut-out flips together.
+  useEffect(() => {
+    document.documentElement.classList.toggle("is-invert", inverted);
+    return () => document.documentElement.classList.remove("is-invert");
+  }, [inverted]);
+
+  // Boot: hold the boot screen a beat after the scene is ready, then fade out.
+  useEffect(() => {
+    if (!ready || !trajectoryData) return;
+    const t = setTimeout(() => setShowBoot(false), 1100);
+    return () => clearTimeout(t);
+  }, [ready, trajectoryData]);
+
+  // Sound: portfolio pattern — the track rolls muted from the first frame so
+  // it is buffered; toggling only unmutes (which cannot fail on a gesture).
+  const toggleSound = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (!soundOn) {
+      a.muted = false;
+      a.volume = 0.42;
+      a.play().catch(() => {});
+      setSoundOn(true);
+    } else {
+      a.volume = 0;
+      a.pause();
+      setSoundOn(false);
+    }
+  };
 
   // Auto-scroll the guidance console to the bottom as the simulation steps forward
   useEffect(() => {
@@ -125,6 +214,79 @@ export default function Globe() {
 
   const logs = getConsoleLogs();
 
+  // 1a. User-interaction guard. Any camera gesture (drag, wheel, pinch) raises
+  // the flag for a moment so the auto-framing camera in effect #6 stands down
+  // and the visitor keeps control — even mid-playback or while tracking.
+  // Polls for the viewer (it mounts asynchronously after ready+data), same
+  // pattern as the scene-setup effect.
+  useEffect(() => {
+    if (!ready || !trajectoryData) return;
+    const types = [
+      ScreenSpaceEventType.LEFT_DOWN, ScreenSpaceEventType.LEFT_UP,
+      ScreenSpaceEventType.RIGHT_DOWN, ScreenSpaceEventType.RIGHT_UP,
+      ScreenSpaceEventType.MIDDLE_DOWN, ScreenSpaceEventType.MIDDLE_UP,
+      ScreenSpaceEventType.WHEEL,
+      ScreenSpaceEventType.PINCH_START, ScreenSpaceEventType.PINCH_END,
+    ];
+    let attached = false;
+    let viewerLocal: any = null;
+    const onInput = () => {
+      userInteractingRef.current = true;
+      if (interactionTimerRef.current !== null) {
+        window.clearTimeout(interactionTimerRef.current);
+      }
+      interactionTimerRef.current = window.setTimeout(() => {
+        userInteractingRef.current = false;
+      }, 800);
+    };
+    const interval = setInterval(() => {
+      const viewer = viewerRef.current?.cesiumElement;
+      if (!viewer || attached) return;
+      attached = true;
+      viewerLocal = viewer;
+      clearInterval(interval);
+      types.forEach((t) => viewer.screenSpaceEventHandler.setInputAction(onInput, t));
+    }, 100);
+    return () => {
+      clearInterval(interval);
+      if (attached && viewerLocal) {
+        types.forEach((t) => viewerLocal.screenSpaceEventHandler.removeInputAction(t));
+      }
+    };
+  }, [ready, trajectoryData]);
+
+  // 1b. Scroll FX — hero parallax (stage drifts slower, meta faster, fade out),
+  // rail progress + section index. Skipped under prefers-reduced-motion.
+  useEffect(() => {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const y = window.scrollY;
+        const docH = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+        const pct = Math.min(1, Math.max(0, y / docH));
+        setScrollPct(pct);
+        setSectionIdx(pct < 0.33 ? 1 : pct < 0.66 ? 2 : 3);
+        if (!reduce) {
+          const hero = heroRef.current, stage = stageRef.current, meta = metaRef.current;
+          if (hero && stage && meta) {
+            const p = Math.min(1, Math.max(0, -hero.getBoundingClientRect().top / window.innerHeight));
+            stage.style.transform = `translate3d(0, ${p * 70}px, 0)`;
+            meta.style.transform = `translate3d(0, ${-p * 46}px, 0)`;
+            stage.style.opacity = String(1 - p * 0.7);
+          }
+        }
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+
   // 1. Initial Cesium Ready Check
   useEffect(() => {
     const interval = setInterval(() => {
@@ -147,26 +309,49 @@ export default function Globe() {
   }, []);
 
   // 3. Configure Cesium Environment (Disable Globe & Set Camera View)
+  // The resium <Viewer> only mounts once BOTH `ready` and `trajectoryData` are
+  // available, and it exposes the Cesium viewer asynchronously (via an internal
+  // layout effect + state round-trip). Polling here guarantees the setup runs
+  // exactly once after the viewer actually exists — otherwise the default Earth
+  // globe stays visible and the camera stays at the planet surface instead of the
+  // Sun-centered heliocentric view.
   useEffect(() => {
-    const viewer = viewerRef.current?.cesiumElement;
-    if (!viewer || !ready) return;
+    if (!ready || !trajectoryData) return;
 
-    // Hide default Earth globe to enable Sun-centered Heliocentric Mode
-    viewer.scene.globe.show = false;
-    if (viewer.scene.skyAtmosphere) {
-      viewer.scene.skyAtmosphere.show = false;
-    }
+    let applied = false;
+    const interval = setInterval(() => {
+      const viewer = viewerRef.current?.cesiumElement;
+      if (!viewer || applied) return;
+      applied = true;
+      clearInterval(interval);
 
-    // Set initial camera view centered at origin (Sun) looking down at the solar system plane
-    viewer.camera.setView({
-      destination: Cartesian3.fromElements(0, -3.2e11, 1.5e11),
-      orientation: {
-        heading: CesiumMath.toRadians(0),
-        pitch: CesiumMath.toRadians(-25),
-        roll: 0,
-      },
-    });
-  }, [ready]);
+      // Hide default Earth globe to enable Sun-centered Heliocentric Mode
+      viewer.scene.globe.show = false;
+      if (viewer.scene.skyAtmosphere) {
+        viewer.scene.skyAtmosphere.show = false;
+      }
+
+      // CRITICAL: Cesium 1.134 enables logarithmic depth by default, which caps
+      // the camera frustum far plane at 1e10 m (10 million km). The heliocentric
+      // scene spans ~3.5e11 m, so without raising this cap every planet and the
+      // spacecraft end up BEYOND the far plane and are clipped — the scene
+      // renders only the skybox. Push the cap out to cover the whole system.
+      viewer.camera.frustum.far = 1e13;
+
+      // Frame the heliocentric system: look at the origin (Sun) from a slight
+      // elevation so Earth, Mars, and the spacecraft are all in view. A plain
+      // setView with heading/pitch/roll here does NOT point at the Sun — in the
+      // ECEF frame it aims at empty space above the ecliptic plane, leaving the
+      // planets off-screen. lookAt the origin (same as the SUN focus button),
+      // then release the transform so the user can rotate freely.
+      viewer.camera.lookAt(
+        Cartesian3.ZERO,
+        new HeadingPitchRange(0, CesiumMath.toRadians(-30), 3.5e11)
+      );
+      viewer.camera.lookAtTransform(Matrix4.IDENTITY);
+    }, 100);
+    return () => clearInterval(interval);
+  }, [ready, trajectoryData]);
 
   // 4. Animation Control Interval Loop
   useEffect(() => {
@@ -188,40 +373,110 @@ export default function Globe() {
     return () => clearInterval(interval);
   }, [isAnimating, trajectoryData, playbackSpeed]);
 
-  // 5. Dynamic Camera Tracking of the Spacecraft Entity
+  // 5. Dynamic Camera Tracking (spacecraft chase view or celestial body follow)
+  // While the sim is PLAYING with SC tracking, the mission framing camera in
+  // effect #6 takes over instead so the planets stay in view.
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement;
-    if (!viewer || !ready) return;
+    if (!viewer || !ready || !trajectoryData) return;
 
-    if (trackSC) {
-      const entity = viewer.entities.getById("spacecraft");
-      if (entity) {
-        viewer.trackedEntity = entity;
-      }
-    } else {
-      viewer.trackedEntity = undefined;
+    let target = undefined;
+    if (trackBody) {
+      target = viewer.entities.getById(trackBody);
+    } else if (trackSC && !isAnimating) {
+      target = viewer.entities.getById("spacecraft");
     }
-  }, [trackSC, ready]);
+    viewer.trackedEntity = target || undefined;
+  }, [trackSC, trackBody, isAnimating, ready, trajectoryData]);
+
+  // Precompute Cartesian3 arrays for orbital lines (memoized to prevent worker allocation spam)
+  const earthPositions = useMemo(() => {
+    if (!trajectoryData) return [];
+    return trajectoryData.earth_pos.map((p: number[]) => 
+      Cartesian3.fromElements(p[0] * 1000, p[1] * 1000, p[2] * 1000)
+    );
+  }, [trajectoryData]);
+
+  const marsPositions = useMemo(() => {
+    if (!trajectoryData) return [];
+    return trajectoryData.mars_pos.map((p: number[]) => 
+      Cartesian3.fromElements(p[0] * 1000, p[1] * 1000, p[2] * 1000)
+    );
+  }, [trajectoryData]);
+
+  const scPositionsAll = useMemo(() => {
+    if (!trajectoryData) return [];
+    return trajectoryData.sc_pos.map((p: number[]) => 
+      Cartesian3.fromElements(p[0] * 1000, p[1] * 1000, p[2] * 1000)
+    );
+  }, [trajectoryData]);
+
+  // Progressive SC trail: only positions up to current animation step
+  const scPositions = useMemo(() => {
+    if (!scPositionsAll.length) return [];
+    return scPositionsAll.slice(0, animationStep + 1);
+  }, [scPositionsAll, animationStep]);
+
+  // Connection lines: spacecraft → Mars and spacecraft → Earth
+  const scToMarsLine = useMemo(() => {
+    if (!scPositionsAll.length || !marsPositions.length) return [];
+    const scPos = scPositionsAll[animationStep];
+    const marsPos = marsPositions[animationStep];
+    if (!scPos || !marsPos) return [];
+    return [scPos, marsPos];
+  }, [scPositionsAll, marsPositions, animationStep]);
+
+  const scToEarthLine = useMemo(() => {
+    if (!scPositionsAll.length || !earthPositions.length) return [];
+    const scPos = scPositionsAll[animationStep];
+    const earthPos = earthPositions[animationStep];
+    if (!scPos || !earthPos) return [];
+    return [scPos, earthPos];
+  }, [scPositionsAll, earthPositions, animationStep]);
+
+  // 6. Mission framing camera: while the simulation plays with SC tracking
+  // engaged, frame the midpoint between the spacecraft and its Mars target so
+  // BOTH stay in view. Cesium's trackedEntity chase view re-points the camera
+  // at the spacecraft alone, which lets the planets drift out of frame.
+  // If the visitor is actively dragging/zooming (userInteractingRef), stand
+  // down and let them keep control; framing resumes once they let go.
+  useEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement;
+    if (!viewer || !ready || !trajectoryData || !isAnimating || !trackSC || userInteractingRef.current) return;
+    const scPos = scPositionsAll[animationStep];
+    const marsPos = marsPositions[animationStep];
+    if (!scPos || !marsPos) return;
+    const mid = Cartesian3.midpoint(scPos, marsPos, new Cartesian3());
+    const dist = Cartesian3.distance(scPos, marsPos);
+    viewer.camera.lookAt(
+      mid,
+      new HeadingPitchRange(0, CesiumMath.toRadians(-35), Math.max(dist * 2.2, 1.5e10))
+    );
+    viewer.camera.lookAtTransform(Matrix4.IDENTITY);
+  }, [animationStep, isAnimating, trackSC, scPositionsAll, marsPositions, ready, trajectoryData]);
 
   if (!ready || !trajectoryData) {
-    return (
-      <div className="h-screen w-screen bg-black flex flex-col items-center justify-center space-y-4">
-        <div className="w-10 h-10 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
-        <span className="text-slate-400 text-sm font-mono tracking-widest animate-pulse">ESTABLISHING TELEMETRY CONSOLE...</span>
-      </div>
-    );
+    return <BootScreen done={false} />;
   }
 
-  // Precompute Cartesian3 arrays for orbital lines
-  const earthPositions = trajectoryData.earth_pos.map((p: number[]) => 
-    Cartesian3.fromElements(p[0] * 1000, p[1] * 1000, p[2] * 1000)
-  );
-  const marsPositions = trajectoryData.mars_pos.map((p: number[]) => 
-    Cartesian3.fromElements(p[0] * 1000, p[1] * 1000, p[2] * 1000)
-  );
-  const scPositions = trajectoryData.sc_pos.map((p: number[]) => 
-    Cartesian3.fromElements(p[0] * 1000, p[1] * 1000, p[2] * 1000)
-  );
+  // 3. Non-linear mapping functions for synchronized timeline
+  const getPercentForHour = (hour: number) => {
+    if (hour <= 0) return 0;
+    if (hour <= 1000) return (hour / 1000) * 25;
+    if (hour <= 1497) return 25 + ((hour - 1000) / 497) * 25;
+    if (hour <= 1500) return 50 + ((hour - 1497) / 3) * 25;
+    if (hour <= 11040) return 75 + ((hour - 1500) / 9540) * 25;
+    return 100;
+  };
+
+  const getHourForPercent = (pct: number) => {
+    if (pct <= 0) return 0;
+    if (pct <= 25) return (pct / 25) * 1000;
+    if (pct <= 50) return 1000 + ((pct - 25) / 25) * 497;
+    if (pct <= 75) return 1497 + ((pct - 50) / 25) * 3;
+    if (pct <= 100) return 1500 + ((pct - 75) / 25) * 9540;
+    return 11040;
+  };
 
   // Helper to jump to a specific hour index dynamically
   const getStepIndexForHour = (hour: number) => {
@@ -238,56 +493,57 @@ export default function Globe() {
     return closestIdx;
   };
 
-  // Camera presets
+  // Camera presets — use lookAt to position camera at a given range from the
+  // target, then immediately release with lookAtTransform(IDENTITY) so the
+  // user can still rotate/zoom freely after the jump.
   const focusSun = () => {
     const viewer = viewerRef.current?.cesiumElement;
     if (!viewer) return;
     setTrackSC(false);
-    viewer.camera.flyTo({
-      destination: Cartesian3.fromElements(0, -3.2e11, 1.5e11),
-      orientation: {
-        heading: CesiumMath.toRadians(0),
-        pitch: CesiumMath.toRadians(-25),
-        roll: 0,
-      },
-    });
+    setTrackBody(null);
+    viewer.trackedEntity = undefined;
+    viewer.camera.lookAt(
+      Cartesian3.ZERO,
+      new HeadingPitchRange(0, CesiumMath.toRadians(-30), 3.5e11)
+    );
+    viewer.camera.lookAtTransform(Matrix4.IDENTITY);
   };
 
   const focusEarth = () => {
     const viewer = viewerRef.current?.cesiumElement;
     if (!viewer) return;
     setTrackSC(false);
-    const currentEarthPos = earthPositions[animationStep];
-    viewer.camera.flyTo({
-      destination: Cartesian3.add(currentEarthPos, new Cartesian3(0, -1e10, 5e9), new Cartesian3()),
-      orientation: {
-        heading: CesiumMath.toRadians(0),
-        pitch: CesiumMath.toRadians(-35),
-        roll: 0,
-      },
-    });
+    // Jump to Earth now, then keep following it as the simulation advances
+    const ep = earthPositions[animationStep];
+    if (!ep) return;
+    viewer.camera.lookAt(
+      ep,
+      new HeadingPitchRange(0, CesiumMath.toRadians(-30), 5e10)
+    );
+    viewer.camera.lookAtTransform(Matrix4.IDENTITY);
+    setTrackBody("earth");
   };
 
   const focusMars = () => {
     const viewer = viewerRef.current?.cesiumElement;
     if (!viewer) return;
     setTrackSC(false);
-    const currentMarsPos = marsPositions[animationStep];
-    viewer.camera.flyTo({
-      destination: Cartesian3.add(currentMarsPos, new Cartesian3(0, -1e10, 5e9), new Cartesian3()),
-      orientation: {
-        heading: CesiumMath.toRadians(0),
-        pitch: CesiumMath.toRadians(-35),
-        roll: 0,
-      },
-    });
+    // Jump to Mars now, then keep following it as the simulation advances
+    const mp = marsPositions[animationStep];
+    if (!mp) return;
+    viewer.camera.lookAt(
+      mp,
+      new HeadingPitchRange(0, CesiumMath.toRadians(-30), 5e10)
+    );
+    viewer.camera.lookAtTransform(Matrix4.IDENTITY);
+    setTrackBody("mars");
   };
 
   // Extract current telemetry values based on animation step
   const currentHour = trajectoryData.steps[animationStep];
   const currentDay = Math.floor(currentHour / 24);
   
-  const scPosNow = scPositions[animationStep];
+  const scPosNow = scPositionsAll[animationStep];
   const earthPosNow = earthPositions[animationStep];
   const marsPosNow = marsPositions[animationStep];
 
@@ -299,15 +555,30 @@ export default function Globe() {
   const isAnomalyActive = trajectoryData.anomaly[animationStep];
   const isCatastrophic = currentHour >= 1500;
 
-  // Calculate distances relative to Mars and Sun in kilometers
+  // Calculate distances relative to Mars, Earth, and Sun in kilometers
   const scPosKm = trajectoryData.sc_pos[animationStep];
   const marsPosKm = trajectoryData.mars_pos[animationStep];
+  const earthPosKm = trajectoryData.earth_pos[animationStep];
   const sunDistKm = Math.sqrt(scPosKm[0]**2 + scPosKm[1]**2 + scPosKm[2]**2);
   const marsDistKm = Math.sqrt(
     (marsPosKm[0] - scPosKm[0])**2 + 
     (marsPosKm[1] - scPosKm[1])**2 + 
     (marsPosKm[2] - scPosKm[2])**2
   );
+  const earthDistKm = Math.sqrt(
+    (earthPosKm[0] - scPosKm[0])**2 + 
+    (earthPosKm[1] - scPosKm[1])**2 + 
+    (earthPosKm[2] - scPosKm[2])**2
+  );
+
+  // Exaggerated planetary radii (meters) so the bodies stay clearly visible at
+  // heliocentric scale. Real radii are ~1000x smaller but would be sub-pixel at
+  // the 10^11 m viewing distances used here. These match the original 3D design;
+  // the earlier ArrayBuffer crash was caused by geodesic polyline interpolation
+  // (now disabled via ArcType.NONE), not by these ellipsoids.
+  const sunRadius = 1.4e10;
+  const earthRadius = 6.5e9;
+  const marsRadius = 5.5e9;
 
   const getSystemStatusLabel = () => {
     if (isCatastrophic) return "CATASTROPHIC DEGRADATION";
@@ -318,30 +589,17 @@ export default function Globe() {
   const getIspColor = () => {
     if (isCatastrophic) return "text-red-400 bg-red-500/10 border-red-500/30";
     if (isAnomalyActive) return "text-amber-400 bg-amber-500/10 border-amber-500/30";
-    return "text-indigo-400 bg-indigo-500/10 border-indigo-500/30";
+    return "text-[var(--ink)] bg-white/[0.04] border-[var(--hairline-strong)]";
   };
 
   const getIspBarColor = () => {
     if (isCatastrophic) return "bg-red-500 shadow-[0_0_10px_#ef4444]";
     if (isAnomalyActive) return "bg-amber-500 shadow-[0_0_10px_#f59e0b]";
-    return "bg-indigo-500 shadow-[0_0_10px_#6366f1]";
+    return "bg-[var(--ink)] shadow-[0_0_10px_var(--glow)]";
   };
 
   const getProgressBarWidth = () => {
-    if (currentHour === 0) return 10;
-    if (currentHour <= 1000) {
-      return 10 + (currentHour / 1000) * 20;
-    }
-    if (currentHour <= 1497) {
-      return 30 + ((currentHour - 1000) / 497) * 20;
-    }
-    if (currentHour <= 1500) {
-      return 50 + ((currentHour - 1497) / 3) * 20;
-    }
-    if (currentHour <= 11040) {
-      return 70 + ((currentHour - 1500) / 9540) * 20;
-    }
-    return 90;
+    return 10 + getPercentForHour(currentHour) * 0.8;
   };
 
   const milestones = [
@@ -349,13 +607,76 @@ export default function Globe() {
     { name: "Decay", hour: 1000, label: "Decay (1000h)", color: "amber", style: { left: "30%" } },
     { name: "Anomaly", hour: 1497, label: "Anomaly (1497h)", color: "rose", style: { left: "50%" } },
     { name: "Failure", hour: 1500, label: "Failure (1500h)", color: "red", style: { left: "70%" } },
-    { name: "Arrival", hour: 11040, label: "Arrival (11040h)", color: "indigo", style: { left: "90%" } },
+    { name: "Arrival", hour: 11040, label: "Arrival (11040h)", color: "violet", style: { left: "90%" } },
   ];
 
+  // Mission phase chip shown in the header bar
+  const getMissionPhase = () => {
+    if (currentHour >= 11040) return "MARS INSERTION COMPLETE";
+    if (currentHour >= 1500) return "DEGRADED CRUISE";
+    if (currentHour >= 1497) return "ANOMALY WINDOW";
+    if (currentHour >= 1000) return "THRUSTER DECAY";
+    if (currentHour > 0) return "EARTH DEPARTURE";
+    return "PRE-LAUNCH";
+  };
+
   return (
-    <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", overflow: "hidden" }} className="bg-black select-none text-slate-200">
+    <ReactLenis ref={lenisRef} root options={{ lerp: 0.09, smoothWheel: true }}>
+      {/* HERO — portfolio "shutter kif." style landing */}
+      <section className="hero" ref={heroRef}>
+        <div className="hero__stage" ref={stageRef}>
+          <span className="hero__tag" aria-hidden="true">✕</span>
+          <h1 className="hero__word">ARES</h1>
+          <p className="hero__word hero__word--one" aria-hidden="true">1.</p>
+          <span className="hero__mark" aria-hidden="true">✦</span>
+        </div>
+        <div className="hero__meta" ref={metaRef}>
+          <span>PPO guidance &amp; trajectory scheduler</span>
+          <span>Earth → Mars · 11,040 h · thruster decay simulation</span>
+        </div>
+        <span className="hero__scrolllabel">scroll</span>
+        <button className="hero__cue" aria-label="Scroll to console" onClick={() => {
+          lenisRef.current?.lenis?.scrollTo("#console", { offset: 0 });
+        }}><i /></button>
+      </section>
+
+      {/* STATS — mission parameters strip (scrolls away before the console pins) */}
+      <section className="stats" id="stats">
+        <div className="stats__head">
+          <span className="stats__num">02</span>
+          <span className="stats__title">mission parameters</span>
+        </div>
+        <div className="stats__grid">
+          <div className="stat">
+            <span className="stat__v">11,040</span>
+            <span className="stat__k">mission hours</span>
+          </div>
+          <div className="stat">
+            <span className="stat__v">54.7<span className="stat__u">M km</span></span>
+            <span className="stat__k">earth → mars distance</span>
+          </div>
+          <div className="stat">
+            <span className="stat__v">0.289<span className="stat__u">N</span></span>
+            <span className="stat__k">max PPO thrust</span>
+          </div>
+          <div className="stat">
+            <span className="stat__v">1782<span className="stat__u">→ 1514.7 s</span></span>
+            <span className="stat__k">specific impulse decay</span>
+          </div>
+        </div>
+        <p className="stats__note">
+          Autonomous guidance under thruster specific-impulse decay. The Isolation
+          Forest flags the anomaly at hour 1,497 — three hours before the 1,500h
+          failure lock caps Isp for the rest of the cruise.
+        </p>
+      </section>
+
+      {/* CONSOLE — pinned below the hero + stats */}
+      <div className="console-shell" id="console">
+        <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }} className="bg-black select-none text-slate-200">
       
-      {/* 3D Cesium Canvas */}
+      {/* 3D Cesium Canvas — data-lenis-prevent so wheel zoom reaches Cesium */}
+      <div data-lenis-prevent style={{ position: "absolute", inset: 0 }}>
       <Viewer
         ref={viewerRef}
         full
@@ -385,23 +706,51 @@ export default function Globe() {
             arcType={ArcType.NONE}
           />
         </Entity>
-        <Entity>
-          <PolylineGraphics
-            positions={scPositions}
-            width={2.5}
-            material={isAnomalyActive ? Color.GOLDENROD : Color.CYAN}
-            arcType={ArcType.NONE}
-          />
-        </Entity>
+        {/* SC Trajectory (progressive — grows with animation) */}
+        {scPositions.length >= 2 && (
+          <Entity>
+            <PolylineGraphics
+              positions={scPositions}
+              width={2.5}
+              material={isAnomalyActive ? Color.GOLDENROD : Color.CYAN}
+              arcType={ArcType.NONE}
+            />
+          </Entity>
+        )}
 
-        {/* Celestial Body Entities */}
+        {/* Distance line: SC → Mars (dashed) */}
+        {scToMarsLine.length === 2 && (
+          <Entity>
+            <PolylineGraphics
+              positions={scToMarsLine}
+              width={1}
+              material={Color.RED.withAlpha(0.35)}
+              arcType={ArcType.NONE}
+            />
+          </Entity>
+        )}
+
+        {/* Distance line: SC → Earth (dashed) */}
+        {scToEarthLine.length === 2 && (
+          <Entity>
+            <PolylineGraphics
+              positions={scToEarthLine}
+              width={1}
+              material={Color.DEEPSKYBLUE.withAlpha(0.2)}
+              arcType={ArcType.NONE}
+            />
+          </Entity>
+        )}
+
+        {/* Celestial Body Entities — rendered as 3D spheres (ellipsoids) */}
         {/* Sun (Origin) */}
-        <Entity position={Cartesian3.ZERO} name="Sun">
-          <PointGraphics 
-            pixelSize={24} 
-            color={Color.YELLOW} 
-            outlineColor={Color.ORANGE} 
-            outlineWidth={2} 
+        <Entity id="sun" position={Cartesian3.ZERO} name="Sun">
+          <EllipsoidGraphics
+            radii={new Cartesian3(sunRadius, sunRadius, sunRadius)}
+            material={Color.YELLOW}
+            outline={true}
+            outlineColor={Color.ORANGE.withAlpha(0.9)}
+            outlineWidth={2}
           />
           <LabelGraphics 
             text="Sun" 
@@ -409,126 +758,177 @@ export default function Globe() {
             fillColor={Color.WHITE} 
             showBackground={true} 
             backgroundColor={Color.BLACK.withAlpha(0.65)} 
-            pixelOffset={new Cartesian2(0, -20)} 
+            pixelOffset={new Cartesian2(0, -30)} 
+            disableDepthTestDistance={Number.POSITIVE_INFINITY}
           />
         </Entity>
 
-        {/* Earth */}
-        <Entity position={earthPosNow} name="Earth">
-          <PointGraphics 
-            pixelSize={14} 
-            color={Color.DEEPSKYBLUE} 
-            outlineColor={Color.WHITE} 
-            outlineWidth={1} 
+        {/* Earth — 3D sphere with distance readout */}
+        <Entity id="earth" position={earthPosNow} name="Earth">
+          <EllipsoidGraphics
+            radii={new Cartesian3(earthRadius, earthRadius, earthRadius)}
+            material={Color.DEEPSKYBLUE}
+            outline={true}
+            outlineColor={Color.WHITE.withAlpha(0.8)}
+            outlineWidth={2}
           />
           <LabelGraphics 
-            text="Earth" 
+            text={`Earth  ${earthDistKm < 1e6 ? (earthDistKm / 1e3).toFixed(0) + 'k km' : (earthDistKm / 1e6).toFixed(1) + 'M km'}`}
             font="11px monospace" 
-            fillColor={Color.WHITE} 
+            fillColor={Color.DEEPSKYBLUE} 
             showBackground={true} 
             backgroundColor={Color.BLACK.withAlpha(0.65)} 
-            pixelOffset={new Cartesian2(0, -16)} 
+            pixelOffset={new Cartesian2(0, -30)} 
+            disableDepthTestDistance={Number.POSITIVE_INFINITY}
           />
         </Entity>
 
-        {/* Mars */}
-        <Entity position={marsPosNow} name="Mars">
-          <PointGraphics 
-            pixelSize={12} 
-            color={Color.ORANGERED} 
-            outlineColor={Color.WHITE} 
-            outlineWidth={1} 
+        {/* Mars — 3D sphere with distance readout */}
+        <Entity id="mars" position={marsPosNow} name="Mars">
+          <EllipsoidGraphics
+            radii={new Cartesian3(marsRadius, marsRadius, marsRadius)}
+            material={Color.ORANGERED}
+            outline={true}
+            outlineColor={Color.WHITE.withAlpha(0.8)}
+            outlineWidth={2}
           />
           <LabelGraphics 
-            text="Mars" 
+            text={`Mars  ${marsDistKm < 1e6 ? (marsDistKm / 1e3).toFixed(0) + 'k km' : (marsDistKm / 1e6).toFixed(1) + 'M km'}`}
             font="11px monospace" 
-            fillColor={Color.WHITE} 
+            fillColor={Color.ORANGERED} 
             showBackground={true} 
             backgroundColor={Color.BLACK.withAlpha(0.65)} 
-            pixelOffset={new Cartesian2(0, -16)} 
+            pixelOffset={new Cartesian2(0, -30)} 
+            disableDepthTestDistance={Number.POSITIVE_INFINITY}
           />
         </Entity>
 
-        {/* Spacecraft (3D Model with warning light) */}
+        {/* Spacecraft — glowing beacon marker (point-based, avoids external GLB
+            dependency). A soft translucent halo sits behind a bright core so the
+            craft stays legible at heliocentric scale. disableDepthTestDistance
+            keeps it visible even while parked at the Earth/Mars sphere centers
+            during departure/insertion. */}
         <Entity id="spacecraft" position={scPosNow} name="PPO Spacecraft">
-          <ModelGraphics
-            uri="https://raw.githubusercontent.com/CesiumGS/cesium/main/Apps/SampleData/models/CesiumSatellite/CesiumSatellite.glb"
-            minimumPixelSize={60}
-            maximumScale={10000}
+          <PointGraphics
+            pixelSize={isAnomalyActive ? 34 : 28}
+            color={(isAnomalyActive ? Color.RED : Color.CYAN).withAlpha(0.18)}
+            disableDepthTestDistance={Number.POSITIVE_INFINITY}
           />
-          {isAnomalyActive && (
-            <PointGraphics
-              pixelSize={14}
-              color={Color.RED}
-              outlineColor={Color.WHITE}
-              outlineWidth={1}
-            />
-          )}
+          <PointGraphics
+            pixelSize={isAnomalyActive ? 16 : 12}
+            color={isAnomalyActive ? Color.RED : Color.CYAN}
+            outlineColor={Color.WHITE}
+            outlineWidth={2}
+            disableDepthTestDistance={Number.POSITIVE_INFINITY}
+          />
+          <LabelGraphics 
+            text="ARES-1" 
+            font="10px monospace" 
+            fillColor={isAnomalyActive ? Color.RED : Color.CYAN} 
+            showBackground={true} 
+            backgroundColor={Color.BLACK.withAlpha(0.65)} 
+            pixelOffset={new Cartesian2(0, -22)} 
+            disableDepthTestDistance={Number.POSITIVE_INFINITY}
+          />
         </Entity>
       </Viewer>
+      </div>
 
-      {/* Top Header Panel */}
-      <div className="absolute top-6 left-6 z-50 flex items-center gap-4 bg-slate-950/85 backdrop-blur-md px-6 py-3.5 rounded-2xl border border-slate-800/80 shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
-        <div className="flex items-center gap-2.5">
-          <span className={`w-3.5 h-3.5 rounded-full shadow-[0_0_10px_currentColor] transition-all duration-300 ${
-            isCatastrophic ? "bg-red-500 text-red-500 animate-pulse" :
-            isAnomalyActive ? "bg-amber-500 text-amber-500 animate-pulse" :
-            "bg-emerald-500 text-emerald-500"
-          }`}></span>
+      {/* Top Header Bar — full-width, B&W */}
+      <div className="absolute top-0 left-0 right-0 z-50 h-16 flex items-center justify-between px-5 backdrop-blur-xl"
+           style={{
+             background: "linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%)",
+             borderBottom: "1px solid var(--hairline)",
+             boxShadow: "0 4px 30px rgba(0,0,0,0.55), 0 1px 0 var(--hairline)"
+           }}>
+        {/* Brand cluster */}
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[var(--ink)] text-[var(--paper)] flex items-center justify-center shadow-[0_0_18px_var(--glow)]">
+            <span className="text-sm font-black font-mono tracking-tighter">A1</span>
+          </div>
           <div className="flex flex-col">
-            <h1 className="text-white text-sm font-bold tracking-wider font-sans leading-none uppercase">ARES-1 Flight Console</h1>
-            <span className="text-[9px] font-mono text-slate-400 mt-1 uppercase">PPO GUIDANCE & TRAJECTORY SCHEDULER</span>
+            <div className="flex items-center gap-2">
+              <span className={`w-2.5 h-2.5 rounded-full shadow-[0_0_10px_currentColor] transition-all duration-300 ${
+                isCatastrophic ? "bg-red-500 text-red-500 animate-pulse" :
+                isAnomalyActive ? "bg-amber-500 text-amber-500 animate-pulse" :
+                "bg-emerald-500 text-emerald-500"
+              }`}></span>
+              <h1 className="text-[var(--ink)] text-sm font-bold tracking-wider font-sans leading-none uppercase">ARES-1 Flight Console</h1>
+            </div>
+            <span className="text-[9px] font-mono text-[var(--ink-dim)] mt-1 uppercase tracking-[0.2em]">PPO Guidance & Trajectory Scheduler</span>
           </div>
         </div>
-        <div className="h-6 w-px bg-slate-800"></div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono text-slate-500 uppercase">SYS STATUS:</span>
-          <span className={`text-[10px] font-mono font-bold tracking-wide uppercase ${
-            isCatastrophic ? "text-red-400" :
-            isAnomalyActive ? "text-amber-400 animate-pulse" :
-            "text-emerald-400"
-          }`}>{getSystemStatusLabel()}</span>
+
+        {/* Center status cluster */}
+        <div className="hidden md:flex items-center gap-4">
+          <div className="h-5 w-px bg-white/20"></div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-[var(--ink-faint)] uppercase">SYS STATUS:</span>
+            <span className={`text-[10px] font-mono font-bold tracking-wide uppercase ${
+              isCatastrophic ? "text-red-400" :
+              isAnomalyActive ? "text-amber-400 animate-pulse" :
+              "text-emerald-400"
+            }`}>{getSystemStatusLabel()}</span>
+          </div>
+        </div>
+
+        {/* Right cluster: mission phase + live badge */}
+        <div className="flex items-center gap-3">
+          <span className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--hairline-strong)] bg-white/[0.04] text-[9px] font-mono font-bold tracking-widest text-[var(--ink-dim)] uppercase">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--ink)] animate-pulse"></span>
+            {getMissionPhase()}
+          </span>
+          <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[9px] font-mono font-bold tracking-widest uppercase ${
+            isCatastrophic
+              ? "border-red-500/30 bg-red-500/10 text-red-400"
+              : isAnomalyActive
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${isCatastrophic || isAnomalyActive ? "bg-current animate-ping" : "bg-current"}`}></span>
+            {isAnimating ? "LIVE TELEMETRY" : "TELEMETRY STANDBY"}
+          </span>
         </div>
       </div>
 
-      {/* LEFT SIDE PANEL: Telemetry Hub */}
-      <div className="absolute top-24 left-6 w-[380px] z-40 flex flex-col rounded-2xl overflow-hidden"
+      {/* LEFT SIDE PANEL: Telemetry Hub — B&W */}
+      <div className="absolute top-[4.5rem] left-4 w-[380px] z-40 flex flex-col rounded-2xl overflow-hidden"
            style={{
              maxHeight: "calc(100vh - 12rem)",
-             background: "linear-gradient(135deg, rgba(8,12,24,0.92) 0%, rgba(0,0,0,0.97) 100%)",
+             background: "linear-gradient(135deg, var(--paper) 0%, var(--paper-2) 100%)",
              backdropFilter: "blur(24px)",
-             border: "1px solid rgba(255,255,255,0.06)",
+             border: "1px solid var(--hairline)",
              borderTop: isCatastrophic 
-               ? "2px solid rgba(239,68,68,0.7)" 
+               ? "2px solid rgba(239,68,68,0.8)" 
                : isAnomalyActive 
-                 ? "2px solid rgba(245,158,11,0.7)"
-                 : "2px solid rgba(16,185,129,0.7)",
-             boxShadow: "0 25px 60px rgba(0,0,0,0.85)"
+                 ? "2px solid rgba(245,158,11,0.8)"
+                 : "2px solid var(--ink)",
+             boxShadow: "0 25px 60px rgba(0,0,0,0.7)"
            }}>
         
         {/* Hub Header */}
-        <div className="p-5 border-b border-white/5 shrink-0 flex items-center justify-between">
+        <div className="p-5 border-b border-[var(--hairline)] shrink-0 flex items-center justify-between">
           <div>
-            <span className="uppercase tracking-[0.2em] text-[9px] font-bold text-cyan-400 font-mono">Flight Metrics</span>
-            <h2 className="text-base font-medium tracking-tight mt-0.5 text-white">System Diagnostics</h2>
+            <span className="uppercase tracking-[0.2em] text-[9px] font-bold text-[var(--ink)] font-mono">Flight Metrics</span>
+            <h2 className="text-base font-medium tracking-tight mt-0.5 text-[var(--ink)]">System Diagnostics</h2>
           </div>
-          <Activity size={16} className={isAnomalyActive ? "text-amber-500 animate-pulse" : "text-cyan-400"} />
+          <Activity size={16} className={isAnomalyActive ? "text-amber-500 animate-pulse" : "text-[var(--ink)]"} />
         </div>
 
         {/* Telemetry Scrollable Content */}
-        <div className="overflow-y-auto p-5 space-y-6 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+        <div data-lenis-prevent className="overflow-y-auto p-5 space-y-6 scrollbar-thin scrollbar-thumb-neutral-700 scrollbar-track-transparent">
           
           {/* Mission Elapsed Time */}
           <div className="space-y-1.5">
-            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider block">Mission Elapsed Time</span>
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
+            <span className="text-[10px] font-mono text-[var(--ink-faint)] uppercase tracking-wider block">Mission Elapsed Time</span>
+            <div className="p-4 rounded-xl bg-white/[0.04] border border-[var(--hairline)] flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <Clock size={16} className="text-cyan-400" />
-                <span className="text-base font-bold font-mono text-white tracking-wide">
+                <Clock size={16} className="text-[var(--ink)]" />
+                <span className="text-base font-bold font-mono text-[var(--ink)] tracking-wide">
                   Day {currentDay.toString().padStart(3, '0')} / Hr {currentHour.toString().padStart(5, '0')}
                 </span>
               </div>
-              <span className="text-[9px] font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-white/5">
+              <span className="text-[9px] font-mono text-[var(--ink-dim)] bg-[var(--paper-3)] px-2 py-0.5 rounded border border-[var(--hairline)]">
                 MAX 11,040h
               </span>
             </div>
@@ -536,26 +936,26 @@ export default function Globe() {
 
           {/* Engine Parameters: Isp & Fuel */}
           <div className="space-y-4">
-            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider block">Engine Diagnostic State</span>
+            <span className="text-[10px] font-mono text-[var(--ink-faint)] uppercase tracking-wider block">Engine Diagnostic State</span>
             
             {/* Specific Impulse Progress */}
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+            <div className="p-4 rounded-xl bg-white/[0.04] border border-[var(--hairline)] space-y-3">
               <div className="flex justify-between items-center text-xs">
                 <div className="flex items-center gap-2">
-                  <Gauge size={14} className="text-slate-400" />
+                  <Gauge size={14} className="text-[var(--ink-dim)]" />
                   <span className="text-slate-300 font-medium">Specific Impulse (Isp)</span>
                 </div>
-                <span className="font-mono text-white font-bold">{ispVal.toFixed(1)} s</span>
+                <span className="font-mono text-[var(--ink)] font-bold">{ispVal.toFixed(1)} s</span>
               </div>
-              <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-white/5">
+              <div className="w-full h-2 bg-[var(--paper-3)] rounded-full overflow-hidden border border-[var(--hairline)]">
                 <div 
                   className={`h-full transition-all duration-300 ${getIspBarColor()}`}
                   style={{ width: `${((ispVal - 1514.7) / (1782 - 1514.7)) * 100}%` }}
                 ></div>
               </div>
-              <div className="flex justify-between items-center text-[9px] font-mono text-slate-500 pt-0.5">
+              <div className="flex justify-between items-center text-[9px] font-mono text-[var(--ink-faint)] pt-0.5">
                 <span>Failed Limit: 1514.7s</span>
-                <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-white/5 text-[8px]">
+                <span className="px-1.5 py-0.5 rounded bg-[var(--paper-3)] border border-[var(--hairline)] text-[8px]">
                   {isCatastrophic ? "FAIL LOCK" : isAnomalyActive ? "DECAY ACTIVE" : "NOMINAL"}
                 </span>
                 <span>Nominal Capacity: 1782.0s</span>
@@ -563,7 +963,7 @@ export default function Globe() {
             </div>
 
             {/* Propellant Mass Level Indicator with SVG Fuel Tank visual */}
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-4">
+            <div className="p-4 rounded-xl bg-white/[0.04] border border-[var(--hairline)] space-y-4">
               <div className="flex justify-between items-center text-xs">
                 <div className="flex items-center gap-2">
                   <Fuel size={14} className="text-emerald-400" />
@@ -574,7 +974,7 @@ export default function Globe() {
               
               <div className="flex gap-4 items-center">
                 {/* SVG Fuel Tank */}
-                <div className="w-10 h-16 shrink-0 relative flex items-center justify-center bg-slate-900 border border-white/10 rounded-lg overflow-hidden">
+                <div className="w-10 h-16 shrink-0 relative flex items-center justify-center bg-[var(--paper-3)] border border-[var(--hairline)] rounded-lg overflow-hidden">
                   <div 
                     className="absolute bottom-0 w-full bg-gradient-to-t from-emerald-600 to-emerald-400 opacity-80 transition-all duration-500"
                     style={{ height: `${fuelPercentage}%` }}
@@ -585,13 +985,13 @@ export default function Globe() {
                 </div>
                 
                 <div className="flex-1 space-y-2">
-                  <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-white/5">
+                  <div className="w-full h-2 bg-[var(--paper-3)] rounded-full overflow-hidden border border-[var(--hairline)]">
                     <div 
                       className="h-full bg-emerald-500 shadow-[0_0_10px_#10b981] transition-all duration-300"
                       style={{ width: `${fuelPercentage}%` }}
                     ></div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-[9px] font-mono text-slate-500">
+                  <div className="grid grid-cols-2 gap-2 text-[9px] font-mono text-[var(--ink-faint)]">
                     <div>
                       <span>Dry Mass:</span>
                       <span className="text-slate-300 block">1648.0 kg</span>
@@ -609,26 +1009,26 @@ export default function Globe() {
 
           {/* Thrust Level Card */}
           <div className="space-y-1.5">
-            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider block">Engine Control Command</span>
-            <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+            <span className="text-[10px] font-mono text-[var(--ink-faint)] uppercase tracking-wider block">Engine Control Command</span>
+            <div className="p-4 rounded-xl bg-white/[0.04] border border-[var(--hairline)] space-y-3">
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   <span className={`w-2.5 h-2.5 rounded-full ${thrustVal > 0.005 ? "bg-amber-500 animate-ping" : "bg-slate-700"}`}></span>
                   <span className="text-xs text-slate-300 font-medium">Thrust Engine state</span>
                 </div>
-                <span className="text-xs font-mono font-bold text-cyan-400">
+                <span className="text-xs font-mono font-bold text-[var(--ink)]">
                   {((thrustVal / 0.289) * 100).toFixed(1)}% ({thrustVal.toFixed(3)} N)
                 </span>
               </div>
-              <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-white/5">
+              <div className="w-full h-1.5 bg-[var(--paper-3)] rounded-full overflow-hidden border border-[var(--hairline)]">
                 <div 
-                  className="h-full bg-cyan-400 shadow-[0_0_8px_#22d3ee] transition-all duration-300"
+                  className="h-full bg-[var(--ink)] transition-all duration-300"
                   style={{ width: `${(thrustVal / 0.289) * 100}%` }}
                 ></div>
               </div>
-              <div className="flex justify-between text-[9px] font-mono text-slate-500">
+              <div className="flex justify-between text-[9px] font-mono text-[var(--ink-faint)]">
                 <span>0.000 N (Ballistic Coasting)</span>
-                <span className="text-slate-400 font-bold uppercase">{thrustVal > 0.005 ? "Engaged PPO Burn" : "Coasting"}</span>
+                <span className="text-[var(--ink)] font-bold uppercase">{thrustVal > 0.005 ? "Engaged PPO Burn" : "Coasting"}</span>
                 <span>0.289 N (Max Capacity)</span>
               </div>
             </div>
@@ -636,14 +1036,14 @@ export default function Globe() {
 
           {/* Planetary Distance Stats */}
           <div className="space-y-1.5">
-            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider block">Astrodynamic Positions</span>
+            <span className="text-[10px] font-mono text-[var(--ink-faint)] uppercase tracking-wider block">Astrodynamic Positions</span>
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3.5 rounded-xl bg-white/5 border border-white/5 text-center">
-                <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold font-mono">Distance to Mars</div>
+              <div className="p-3.5 rounded-xl bg-white/[0.04] border border-[var(--hairline)] text-center">
+                <div className="text-[9px] uppercase tracking-wider text-[var(--ink-faint)] font-bold font-mono">Distance to Mars</div>
                 <div className="text-sm font-bold text-red-400 mt-1 font-mono">{(marsDistKm / 1e6).toFixed(2)}M km</div>
               </div>
-              <div className="p-3.5 rounded-xl bg-white/5 border border-white/5 text-center">
-                <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold font-mono">Distance to Sun</div>
+              <div className="p-3.5 rounded-xl bg-white/[0.04] border border-[var(--hairline)] text-center">
+                <div className="text-[9px] uppercase tracking-wider text-[var(--ink-faint)] font-bold font-mono">Distance to Sun</div>
                 <div className="text-sm font-bold text-amber-400 mt-1 font-mono">{(sunDistKm / 1e6).toFixed(2)}M km</div>
               </div>
             </div>
@@ -651,26 +1051,26 @@ export default function Globe() {
 
           {/* System Health Check grid */}
           <div className="space-y-1.5">
-            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider block">Subsystem Verification Matrix</span>
+            <span className="text-[10px] font-mono text-[var(--ink-faint)] uppercase tracking-wider block">Subsystem Verification Matrix</span>
             <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
-              <div className="p-2.5 rounded-lg bg-white/5 border border-white/5 flex items-center justify-between">
-                <span className="text-slate-400">AI Guidance:</span>
+              <div className="p-2.5 rounded-lg bg-white/[0.04] border border-[var(--hairline)] flex items-center justify-between">
+                <span className="text-[var(--ink-dim)]">AI Guidance:</span>
                 <span className={`font-bold ${isCatastrophic ? "text-amber-400" : "text-emerald-400"}`}>
                   {isCatastrophic ? "RE-ROUTING" : "ACTIVE"}
                 </span>
               </div>
-              <div className="p-2.5 rounded-lg bg-white/5 border border-white/5 flex items-center justify-between">
-                <span className="text-slate-400">Propellant:</span>
+              <div className="p-2.5 rounded-lg bg-white/[0.04] border border-[var(--hairline)] flex items-center justify-between">
+                <span className="text-[var(--ink-dim)]">Propellant:</span>
                 <span className="text-emerald-400 font-bold">NOMINAL</span>
               </div>
-              <div className="p-2.5 rounded-lg bg-white/5 border border-white/5 flex items-center justify-between">
-                <span className="text-slate-400">Thruster Isp:</span>
+              <div className="p-2.5 rounded-lg bg-white/[0.04] border border-[var(--hairline)] flex items-center justify-between">
+                <span className="text-[var(--ink-dim)]">Thruster Isp:</span>
                 <span className={`font-bold ${isCatastrophic ? "text-red-400" : isAnomalyActive ? "text-amber-400" : "text-emerald-400"}`}>
                   {isCatastrophic ? "DEGRADED" : isAnomalyActive ? "DECAY" : "NOMINAL"}
                 </span>
               </div>
-              <div className="p-2.5 rounded-lg bg-white/5 border border-white/5 flex items-center justify-between">
-                <span className="text-slate-400">Anomaly Det:</span>
+              <div className="p-2.5 rounded-lg bg-white/[0.04] border border-[var(--hairline)] flex items-center justify-between">
+                <span className="text-[var(--ink-dim)]">Anomaly Det:</span>
                 <span className={`font-bold ${isAnomalyActive ? "text-red-400" : "text-emerald-400"}`}>
                   {isAnomalyActive ? "FLAGGED" : "NOMINAL"}
                 </span>
@@ -681,26 +1081,26 @@ export default function Globe() {
         </div>
       </div>
 
-      {/* RIGHT SIDE PANEL: Live Guidance Logs & Scientific Plots */}
-      <div className="absolute top-24 right-6 w-[440px] z-40 flex flex-col rounded-2xl overflow-hidden"
+      {/* RIGHT SIDE PANEL: Live Guidance Logs & Scientific Plots — B&W */}
+      <div className="absolute top-[4.5rem] right-4 w-[440px] z-40 flex flex-col rounded-2xl overflow-hidden"
            style={{
              maxHeight: "calc(100vh - 12rem)",
-             background: "linear-gradient(135deg, rgba(8,12,24,0.92) 0%, rgba(0,0,0,0.97) 100%)",
+             background: "linear-gradient(135deg, var(--paper) 0%, var(--paper-2) 100%)",
              backdropFilter: "blur(24px)",
-             border: "1px solid rgba(255,255,255,0.06)",
-             borderTop: "2px solid rgba(6,182,212,0.7)",
-             boxShadow: "-10px 25px 60px rgba(0,0,0,0.85)"
+             border: "1px solid var(--hairline)",
+             borderTop: "2px solid var(--ink)",
+             boxShadow: "-10px 25px 60px rgba(0,0,0,0.7)"
            }}>
         
         {/* Tab Controls Selector */}
-        <div className="bg-slate-900/60 p-2 shrink-0 border-b border-white/5 flex items-center justify-between">
+        <div className="bg-[var(--paper-2)] p-2 shrink-0 border-b border-[var(--hairline)] flex items-center justify-between">
           <div className="flex gap-1.5 w-full">
             <button
               onClick={() => setActiveRightTab("console")}
               className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-mono font-bold tracking-wide uppercase transition-all ${
                 activeRightTab === "console" 
-                  ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/25" 
-                  : "text-slate-400 hover:text-white border border-transparent hover:bg-white/5"
+                  ? "bg-[var(--ink)] text-[var(--paper)] border border-transparent" 
+                  : "text-[var(--ink-dim)] hover:text-[var(--ink)] border border-transparent hover:bg-white/[0.04]"
               }`}
             >
               <Terminal size={12} />
@@ -710,8 +1110,8 @@ export default function Globe() {
               onClick={() => setActiveRightTab("trajectory")}
               className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-mono font-bold tracking-wide uppercase transition-all ${
                 activeRightTab === "trajectory" 
-                  ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/25" 
-                  : "text-slate-400 hover:text-white border border-transparent hover:bg-white/5"
+                  ? "bg-[var(--ink)] text-[var(--paper)] border border-transparent" 
+                  : "text-[var(--ink-dim)] hover:text-[var(--ink)] border border-transparent hover:bg-white/[0.04]"
               }`}
             >
               <Image size={12} />
@@ -721,8 +1121,8 @@ export default function Globe() {
               onClick={() => setActiveRightTab("isp")}
               className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-mono font-bold tracking-wide uppercase transition-all ${
                 activeRightTab === "isp" 
-                  ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/25" 
-                  : "text-slate-400 hover:text-white border border-transparent hover:bg-white/5"
+                  ? "bg-[var(--ink)] text-[var(--paper)] border border-transparent" 
+                  : "text-[var(--ink-dim)] hover:text-[var(--ink)] border border-transparent hover:bg-white/[0.04]"
               }`}
             >
               <Image size={12} />
@@ -732,8 +1132,8 @@ export default function Globe() {
               onClick={() => setActiveRightTab("thrust")}
               className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-mono font-bold tracking-wide uppercase transition-all ${
                 activeRightTab === "thrust" 
-                  ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/25" 
-                  : "text-slate-400 hover:text-white border border-transparent hover:bg-white/5"
+                  ? "bg-[var(--ink)] text-[var(--paper)] border border-transparent" 
+                  : "text-[var(--ink-dim)] hover:text-[var(--ink)] border border-transparent hover:bg-white/[0.04]"
               }`}
             >
               <Image size={12} />
@@ -743,20 +1143,20 @@ export default function Globe() {
         </div>
 
         {/* Tab Contents */}
-        <div className="flex-1 overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent flex flex-col justify-between" style={{ minHeight: "260px" }}>
+        <div data-lenis-prevent className="flex-1 overflow-y-auto p-5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent flex flex-col justify-between" style={{ minHeight: "260px" }}>
           
           {/* TAB 1: Live Terminal Log */}
           {activeRightTab === "console" && (
             <div className="flex flex-col flex-1 h-full min-h-0 justify-between">
               <div className="flex items-center gap-2 pb-2 shrink-0 border-b border-white/5 mb-3">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_#22d3ee]"></span>
-                <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">PPO Guidance Neural Network Log</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--ink)] animate-pulse shadow-[0_0_6px_var(--glow)]"></span>
+                <span className="text-[10px] font-mono uppercase text-[var(--ink-dim)] font-bold">PPO Guidance Neural Network Log</span>
               </div>
-              <div className="flex-1 overflow-y-auto font-mono text-[10px] text-slate-300 space-y-2.5 leading-relaxed pr-1 max-h-[380px] scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+              <div data-lenis-prevent className="flex-1 overflow-y-auto font-mono text-[10px] text-slate-300 space-y-2.5 leading-relaxed pr-1 max-h-[380px] scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
                 {logs.map((log, idx) => (
                   <div key={idx} className="border-l-2 border-white/5 pl-2">
                     {log.includes('🚀') || log.includes('🎯') ? (
-                      <span className="text-cyan-400 font-semibold">{log}</span>
+                      <span className="text-[var(--ink)] font-semibold">{log}</span>
                     ) : log.includes('⚠️') ? (
                       <span className="text-amber-400 font-semibold">{log}</span>
                     ) : log.includes('🚨') || log.includes('💥') ? (
@@ -780,7 +1180,7 @@ export default function Globe() {
                 <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">Paper Figure: 3D Heliocentric trajectory</span>
                 <button 
                   onClick={() => setZoomPlot("/figures/3d_heliocentric_trajectory.png")}
-                  className="p-1 hover:bg-white/5 rounded text-cyan-400 flex items-center gap-1 text-[9px] font-mono uppercase border border-cyan-500/20"
+                  className="p-1 hover:bg-white/5 rounded text-[var(--ink)] flex items-center gap-1 text-[9px] font-mono uppercase border border-[var(--hairline-strong)]"
                 >
                   <Maximize2 size={10} />
                   Zoom
@@ -810,7 +1210,7 @@ export default function Globe() {
                 <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">Paper Figure: Specific Impulse decay</span>
                 <button 
                   onClick={() => setZoomPlot("/figures/isp_degradation_anomaly_detection.png")}
-                  className="p-1 hover:bg-white/5 rounded text-cyan-400 flex items-center gap-1 text-[9px] font-mono uppercase border border-cyan-500/20"
+                  className="p-1 hover:bg-white/5 rounded text-[var(--ink)] flex items-center gap-1 text-[9px] font-mono uppercase border border-[var(--hairline-strong)]"
                 >
                   <Maximize2 size={10} />
                   Zoom
@@ -840,7 +1240,7 @@ export default function Globe() {
                 <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">Paper Figure: Thrust and propellant conservation</span>
                 <button 
                   onClick={() => setZoomPlot("/figures/thrust_magnitude_propellant.png")}
-                  className="p-1 hover:bg-white/5 rounded text-cyan-400 flex items-center gap-1 text-[9px] font-mono uppercase border border-cyan-500/20"
+                  className="p-1 hover:bg-white/5 rounded text-[var(--ink)] flex items-center gap-1 text-[9px] font-mono uppercase border border-[var(--hairline-strong)]"
                 >
                   <Maximize2 size={10} />
                   Zoom
@@ -870,33 +1270,45 @@ export default function Globe() {
       {showGuide && (
         <div 
           onClick={() => setShowGuide(false)}
-          className="absolute bottom-28 left-6 z-40 bg-slate-950/95 border border-slate-800/80 text-white text-xs px-5 py-4 rounded-xl max-w-[320px] shadow-2xl cursor-pointer hover:border-slate-700 transition-colors"
+          className="absolute bottom-28 left-6 z-40 px-5 py-4 rounded-xl max-w-[320px] shadow-2xl cursor-pointer transition-colors text-[var(--ink)] text-xs"
+          style={{
+            background: "linear-gradient(135deg, var(--paper) 0%, var(--paper-2) 100%)",
+            backdropFilter: "blur(20px)",
+            border: "1px solid var(--hairline)",
+            boxShadow: "0 20px 50px rgba(0,0,0,0.7)"
+          }}
         >
-          <div className="text-xs font-bold font-mono tracking-wider mb-1.5 text-cyan-400 flex items-center gap-1.5">
+          <div className="text-xs font-bold font-mono tracking-wider mb-1.5 text-[var(--ink)] flex items-center gap-1.5">
             <HelpCircle size={14} />
             Heliocentric Navigation Map
           </div>
-          <div className="text-slate-400 font-mono text-[10px] leading-relaxed space-y-1">
+          <div className="text-[var(--ink-dim)] font-mono text-[10px] leading-relaxed space-y-1">
             <p>• <span className="text-yellow-400 font-bold">Yellow Center</span>: Sun (Barycentric origin)</p>
             <p>• <span className="text-cyan-400 font-bold">Blue Track</span>: Earth Orbital Ellipse</p>
             <p>• <span className="text-red-400 font-bold">Red Track</span>: Mars Orbital Ellipse</p>
             <p>• <span className="text-indigo-400 font-bold">Cyan Line</span>: Spacecraft Trajectory (turns gold during thruster degradation)</p>
           </div>
-          <div className="text-slate-500 text-[9px] font-mono mt-2.5 text-right">Click to dismiss guide</div>
+          <div className="text-[var(--ink-faint)] text-[9px] font-mono mt-2.5 text-right">Click to dismiss guide</div>
         </div>
       )}
 
-      {/* BOTTOM CENTER CONTROLS: Timeline & Playback Panel */}
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-3.5 bg-slate-950/90 border border-slate-800/75 p-5 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.85)] backdrop-blur-md min-w-[620px] max-w-[90vw]">
+      {/* BOTTOM CENTER CONTROLS: Timeline & Playback Panel — B&W */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-3.5 p-5 rounded-2xl min-w-[620px] max-w-[90vw]"
+           style={{
+             background: "linear-gradient(135deg, var(--paper) 0%, var(--paper-2) 100%)",
+             backdropFilter: "blur(20px)",
+             border: "1px solid var(--hairline)",
+             boxShadow: "0 20px 50px rgba(0,0,0,0.7)"
+           }}>
         
         {/* Clickable Event Milestone Timeline Checkpoints */}
         <div className="relative w-full h-8 flex items-center px-4">
           {/* Background Track Line */}
-          <div className="absolute left-4 right-4 h-[3px] bg-slate-800 rounded-full"></div>
+          <div className="absolute left-4 right-4 h-[3px] bg-[var(--paper-3)] rounded-full border border-[var(--hairline)]"></div>
           
           {/* Active Gradient Progress Track */}
           <div 
-            className="absolute left-4 h-[3px] bg-gradient-to-r from-emerald-500 via-amber-500 to-indigo-500 rounded-full shadow-[0_0_8px_rgba(99,102,241,0.6)] transition-all duration-300"
+            className="absolute left-4 h-[3px] bg-[var(--ink)] rounded-full shadow-[0_0_8px_var(--glow)] transition-all duration-300"
             style={{ width: `${getProgressBarWidth()}%` }}
           ></div>
           
@@ -904,13 +1316,13 @@ export default function Globe() {
           {milestones.map((m, idx) => {
             const index = getStepIndexForHour(m.hour);
             const isReached = animationStep >= index;
-            let btnColor = "bg-slate-700 hover:bg-slate-600";
+            let btnColor = "bg-[var(--paper-3)] hover:bg-[var(--paper-2)]";
             if (isReached) {
               if (m.color === "emerald") btnColor = "bg-emerald-500 shadow-[0_0_8px_#10b981]";
               else if (m.color === "amber") btnColor = "bg-amber-500 shadow-[0_0_8px_#f59e0b]";
               else if (m.color === "rose") btnColor = "bg-rose-500 shadow-[0_0_8px_#f43f5e]";
               else if (m.color === "red") btnColor = "bg-red-500 shadow-[0_0_8px_#ef4444]";
-              else if (m.color === "indigo") btnColor = "bg-indigo-500 shadow-[0_0_8px_#6366f1]";
+              else if (m.color === "violet") btnColor = "bg-[var(--ink)] shadow-[0_0_8px_var(--glow)]";
             }
             return (
               <button 
@@ -923,7 +1335,7 @@ export default function Globe() {
                 style={m.style}
               >
                 <span className={`w-3 h-3 rounded-full border border-white/20 transition-all duration-300 ${btnColor}`}></span>
-                <span className="text-[8px] text-slate-400 group-hover:text-white mb-1.5 font-mono tracking-wide transition-colors uppercase">
+                <span className="text-[8px] text-slate-400 group-hover:text-[var(--ink)] mb-1.5 font-mono tracking-wide transition-colors uppercase">
                   {m.name}
                 </span>
               </button>
@@ -936,15 +1348,19 @@ export default function Globe() {
           <input
             type="range"
             min={0}
-            max={trajectoryData.steps.length - 1}
-            value={animationStep}
+            max={100}
+            step={0.1}
+            value={getPercentForHour(currentHour)}
             onChange={(e) => {
-              setAnimationStep(parseInt(e.target.value));
+              const pct = parseFloat(e.target.value);
+              const targetHour = getHourForPercent(pct);
+              const targetStep = getStepIndexForHour(targetHour);
+              setAnimationStep(targetStep);
               setIsAnimating(false); // Pause on scrub
             }}
-            className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-500 focus:outline-none"
+            className="flex-1 h-1.5 bg-[var(--paper-3)] rounded-lg appearance-none cursor-pointer accent-[var(--ink)] focus:outline-none"
           />
-          <span className="text-xs font-mono text-white bg-slate-900 border border-white/5 px-3 py-1 rounded-lg min-w-[140px] text-center shadow-inner">
+          <span className="text-xs font-mono text-[var(--ink)] px-3 py-1 rounded-lg min-w-[140px] text-center shadow-inner border border-[var(--hairline)] bg-[var(--paper-3)]">
             Day {currentDay.toString().padStart(3, '0')} / Hr {currentHour.toString().padStart(5, '0')}
           </span>
         </div>
@@ -959,17 +1375,24 @@ export default function Globe() {
                 setAnimationStep(0);
                 setIsAnimating(false);
               }}
-              className="p-2 bg-slate-900 border border-white/10 hover:border-white/20 hover:bg-slate-800 rounded-lg transition-all text-slate-400 hover:text-white flex items-center justify-center"
+              className="p-2 bg-[var(--paper-3)] border border-[var(--hairline)] hover:border-[var(--hairline-strong)] hover:bg-[var(--paper-2)] rounded-lg transition-all text-[var(--ink-dim)] hover:text-[var(--ink)] flex items-center justify-center"
               title="Reset flight timeline"
             >
               <RotateCcw size={14} />
             </button>
             <button
-              onClick={() => setIsAnimating(!isAnimating)}
-              className={`p-2 px-3.5 rounded-lg transition-all font-semibold flex items-center gap-1.5 text-xs text-white ${
+              onClick={() => {
+                const next = !isAnimating;
+                setIsAnimating(next);
+                if (next) {
+                  setTrackSC(true);  // auto-lock SC on play
+                  setTrackBody(null);  // stop following any single planet
+                }
+              }}
+              className={`p-2 px-3.5 rounded-lg transition-all font-semibold flex items-center gap-1.5 text-xs ${
                 isAnimating 
-                  ? "bg-amber-600 shadow-lg shadow-amber-500/10 hover:bg-amber-500 border border-amber-500/20" 
-                  : "bg-cyan-600 shadow-lg shadow-cyan-500/10 hover:bg-cyan-500 border border-cyan-500/20"
+                  ? "bg-amber-600 shadow-lg shadow-amber-500/10 hover:bg-amber-500 border border-amber-500/20 text-white" 
+                  : "bg-[var(--ink)] text-[var(--paper)] shadow-lg hover:opacity-80 border border-transparent"
               }`}
               title={isAnimating ? "Pause simulation" : "Start simulation"}
             >
@@ -979,15 +1402,15 @@ export default function Globe() {
           </div>
 
           {/* Playback Speed Multiplier selector */}
-          <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-white/5">
+          <div className="flex items-center gap-1 bg-[var(--paper-3)] p-0.5 rounded-lg border border-[var(--hairline)]">
             {[1, 2, 5, 10, 20].map((s) => (
               <button
                 key={s}
                 onClick={() => setPlaybackSpeed(s)}
                 className={`px-2.5 py-1 rounded-md text-[10px] font-mono font-bold transition-all ${
                   playbackSpeed === s 
-                    ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/25" 
-                    : "text-slate-500 hover:text-slate-300"
+                    ? "bg-[var(--ink)] text-[var(--paper)] border border-transparent" 
+                    : "text-[var(--ink-faint)] hover:text-[var(--ink-dim)]"
                 }`}
               >
                 {s}x
@@ -996,10 +1419,10 @@ export default function Globe() {
           </div>
 
           {/* Camera Focus Controls */}
-          <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-white/5">
+          <div className="flex items-center gap-1 bg-[var(--paper-3)] p-0.5 rounded-lg border border-[var(--hairline)]">
             <button
               onClick={focusSun}
-              className="px-2 py-1.5 rounded-md text-[9px] font-mono font-bold text-slate-400 hover:text-white flex items-center gap-1 transition-all"
+              className="px-2 py-1.5 rounded-md text-[9px] font-mono font-bold text-[var(--ink-faint)] hover:text-[var(--ink)] flex items-center gap-1 transition-all"
               title="Focus Sun Viewport"
             >
               <Compass size={11} />
@@ -1007,29 +1430,37 @@ export default function Globe() {
             </button>
             <button
               onClick={focusEarth}
-              className="px-2 py-1.5 rounded-md text-[9px] font-mono font-bold text-slate-400 hover:text-white flex items-center gap-1 transition-all"
-              title="Focus Earth Orbit"
+              className={`px-2 py-1.5 rounded-md text-[9px] font-mono font-bold flex items-center gap-1 transition-all ${
+                trackBody === "earth"
+                  ? "bg-[var(--ink)] text-[var(--paper)] border border-transparent"                  : "text-[var(--ink-faint)] hover:text-[var(--ink)]"
+                }`}
+              title="Track Earth — camera follows it as the simulation advances"
             >
               <Compass size={11} />
               EARTH
             </button>
             <button
               onClick={focusMars}
-              className="px-2 py-1.5 rounded-md text-[9px] font-mono font-bold text-slate-400 hover:text-white flex items-center gap-1 transition-all"
-              title="Focus Mars Intercept"
+              className={`px-2 py-1.5 rounded-md text-[9px] font-mono font-bold flex items-center gap-1 transition-all ${
+                trackBody === "mars"
+                  ? "bg-[var(--ink)] text-[var(--paper)] border border-transparent"                  : "text-[var(--ink-faint)] hover:text-[var(--ink)]"
+                }`}
+              title="Track Mars — camera follows it as the simulation advances"
             >
               <Compass size={11} />
               MARS
             </button>
-            <div className="w-px h-3.5 bg-slate-800 mx-1"></div>
+            <div className="w-px h-3.5 bg-white/20 mx-1"></div>
             <button
-              onClick={() => setTrackSC(!trackSC)}
+              onClick={() => {
+                setTrackSC(!trackSC);
+                setTrackBody(null);
+              }}
               className={`px-2 py-1.5 rounded-md text-[9px] font-mono font-bold flex items-center gap-1 transition-all ${
                 trackSC 
-                  ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/25" 
-                  : "text-slate-400 hover:text-white"
-              }`}
-              title="Track Spacecraft Viewport"
+                  ? "bg-[var(--ink)] text-[var(--paper)] border border-transparent"                  : "text-[var(--ink-faint)] hover:text-[var(--ink)]"
+                }`}
+              title="Track Spacecraft Viewport — during playback, frames the spacecraft and Mars together"
             >
               <Crosshair size={11} className={trackSC ? "animate-spin" : ""} style={{ animationDuration: "5s" }} />
               LOCK SC
@@ -1047,11 +1478,16 @@ export default function Globe() {
           className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-8 cursor-zoom-out animate-fade-in"
         >
           <div 
-            className="relative max-w-5xl w-full bg-slate-950 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl p-6 animate-scale-up"
+            className="relative max-w-5xl w-full rounded-3xl overflow-hidden shadow-2xl p-6 animate-scale-up"
+            style={{
+              background: "linear-gradient(135deg, var(--paper) 0%, var(--paper-2) 100%)",
+              border: "1px solid var(--hairline-strong)",
+              boxShadow: "0 30px 80px rgba(0,0,0,0.8)"
+            }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex justify-between items-center pb-4 border-b border-white/5 mb-4">
-              <div className="flex items-center gap-2 text-cyan-400">
+            <div className="flex justify-between items-center pb-4 border-b border-[var(--hairline)] mb-4">
+              <div className="flex items-center gap-2 text-[var(--ink)]">
                 <Image size={18} />
                 <span className="text-sm font-mono font-bold uppercase tracking-wider">
                   {zoomPlot.includes('trajectory') ? "Trajectory Plot (Fig. 1)" :
@@ -1061,14 +1497,14 @@ export default function Globe() {
               </div>
               <button 
                 onClick={() => setZoomPlot(null)}
-                className="p-2 bg-slate-900 border border-white/5 hover:border-white/10 rounded-xl text-slate-400 hover:text-white"
+                className="p-2 bg-[var(--paper-3)] border border-[var(--hairline)] hover:border-[var(--hairline-strong)] rounded-xl text-[var(--ink-dim)] hover:text-[var(--ink)]"
               >
                 <X size={16} />
               </button>
             </div>
             
             <div className="w-full flex flex-col md:flex-row gap-6 items-start">
-              <div className="flex-1 bg-black p-2 rounded-2xl border border-white/5">
+              <div className="flex-1 bg-black p-2 rounded-2xl border border-[var(--hairline)]">
                 <img 
                   src={zoomPlot} 
                   alt="Zoomed Reference Chart" 
@@ -1076,7 +1512,7 @@ export default function Globe() {
                 />
               </div>
               <div className="w-full md:w-80 shrink-0 space-y-4">
-                <h4 className="text-xs font-mono font-bold text-slate-400 uppercase tracking-widest border-b border-white/5 pb-1">
+                <h4 className="text-xs font-mono font-bold text-[var(--ink-dim)] uppercase tracking-widest border-b border-[var(--hairline)] pb-1">
                   Academic Summary
                 </h4>
                 <div className="text-xs text-slate-300 leading-relaxed font-sans space-y-3">
@@ -1110,7 +1546,7 @@ export default function Globe() {
                   )}
                 </div>
                 
-                <div className="p-4 rounded-xl bg-slate-900 border border-white/5 font-mono text-[9.5px] text-slate-400 leading-normal space-y-1">
+                <div className="p-4 rounded-xl bg-[var(--paper-3)] border border-[var(--hairline)] font-mono text-[9.5px] text-[var(--ink-dim)] leading-normal space-y-1">
                   <div><strong>Project</strong>: Houston Climate Dashboard (Visualizer)</div>
                   <div><strong>Context</strong>: Autonomous Guidance Optimization</div>
                   <div><strong>Format</strong>: Publication Figure (.png/.pdf)</div>
@@ -1121,7 +1557,26 @@ export default function Globe() {
         </div>
       )}
 
-    </div>
+        </div>
+      </div>
+
+      {/* Scroll progress rail — index + hairline fill (portfolio-style) */}
+      <div className="rail" aria-hidden="true">
+        <div className="rail__track">
+          <div className="rail__fill" style={{ height: `${Math.round(scrollPct * 100)}%` }} />
+        </div>
+        <div className="rail__idx">{String(sectionIdx).padStart(2, "0")}<i>/03</i></div>
+      </div>
+
+      {/* portfolio-style corner controls */}
+      <div className="ctl">
+        <button className="ctl__b" aria-pressed={inverted} onClick={() => setInverted(!inverted)}>invert</button>
+        <button className="ctl__b" aria-pressed={soundOn} onClick={toggleSound}>{soundOn ? "sound on" : "sound off"}</button>
+      </div>
+
+      <BootScreen done={!showBoot} />
+      <audio ref={audioRef} src="/audio/theme.mp3" loop preload="auto" playsInline muted />
+    </ReactLenis>
   );
 }
 

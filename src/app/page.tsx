@@ -25,7 +25,7 @@ export default function Home() {
   }, []);
 
   return (
-    <main style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: 'black' }}>
+    <main style={{ width: '100%', minHeight: '100vh', background: 'black' }}>
       {cesiumReady ? (
         <DynamicGlobe />
       ) : (
