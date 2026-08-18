@@ -29,16 +29,35 @@ import {
   HeadingPitchRange,
   Matrix4,
   ScreenSpaceEventType
-} from "cesium";
-import { 
+} from "cesium";import {
   CesiumComponentRef, 
   Viewer, 
   Entity, 
   PointGraphics, 
   PolylineGraphics, 
   EllipsoidGraphics,
-  LabelGraphics
+  LabelGraphics,
+  BillboardGraphics
 } from "resium";
+import HeroBlob from "./HeroBlob";
+
+// Soft radial glow sprite (canvas-generated) used for the Sun corona and the
+// Earth/Mars halos. Additive blend in Cesium so it reads as light, not paint.
+const GLOW_URL = (() => {
+  if (typeof document === "undefined") return "";
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d");
+  if (!g) return "";
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.22, "rgba(255,255,255,0.6)");
+  grad.addColorStop(0.55, "rgba(255,255,255,0.14)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  return c.toDataURL();
+})();
 
 interface TrajectoryPoint {
   step: number;
@@ -113,6 +132,9 @@ export default function Globe() {
   const heroRef = useRef<HTMLElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const metaRef = useRef<HTMLDivElement | null>(null);
+  const statsRef = useRef<HTMLElement | null>(null);
+  const consoleShellRef = useRef<HTMLDivElement | null>(null);
+  const cursorRef = useRef<HTMLDivElement | null>(null);
 
   // User-interaction guard: while the visitor drags/zooms the camera, the
   // auto-framing camera stands down so the view never fights their hand.
@@ -272,7 +294,10 @@ export default function Globe() {
           const hero = heroRef.current, stage = stageRef.current, meta = metaRef.current;
           if (hero && stage && meta) {
             const p = Math.min(1, Math.max(0, -hero.getBoundingClientRect().top / window.innerHeight));
-            stage.style.transform = `translate3d(0, ${p * 70}px, 0)`;
+            // 3D wordmark: the whole stage tilts back in perspective as you
+            // scroll, like the type is falling away from the viewport.
+            stage.style.transform =
+              `perspective(1000px) translate3d(0, ${p * 70}px, 0) rotateX(${p * 26}deg)`;
             meta.style.transform = `translate3d(0, ${-p * 46}px, 0)`;
             stage.style.opacity = String(1 - p * 0.7);
           }
@@ -286,6 +311,118 @@ export default function Globe() {
       cancelAnimationFrame(raf);
     };
   }, []);
+
+  // 1c. Cursor light — a soft radial glow that trails the pointer with lag
+  // (difference blend so it reads on both the dark and inverted themes).
+  // Skipped on touch devices and under prefers-reduced-motion. Gated on
+  // ready+data because the main tree (with the cursor div) only mounts then.
+  useEffect(() => {
+    if (!ready || !trajectoryData) return;
+    const el = cursorRef.current;
+    if (!el) return;
+    if (
+      window.matchMedia("(pointer: coarse)").matches ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+    let x = window.innerWidth / 2, y = window.innerHeight / 2;
+    let tx = x, ty = y, raf = 0;
+    const onMove = (e: PointerEvent) => {
+      tx = e.clientX;
+      ty = e.clientY;
+    };
+    const loop = () => {
+      x += (tx - x) * 0.12;
+      y += (ty - y) * 0.12;
+      el.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`;
+      raf = requestAnimationFrame(loop);
+    };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    raf = requestAnimationFrame(loop);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      cancelAnimationFrame(raf);
+    };
+  }, [ready, trajectoryData]);
+
+  // 1d. Stats reveal + count-up: when the mission-parameters strip scrolls
+  // into view, the cards stagger in and the VCR numbers count up to target.
+  useEffect(() => {
+    if (!ready || !trajectoryData) return;
+    const section = statsRef.current;
+    if (!section) return;
+    let started = false;
+    const io = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting || started) return;
+      started = true;
+      section.classList.add("is-in");
+      section.querySelectorAll<HTMLElement>("[data-count]").forEach((el) => {
+        const target = parseFloat(el.dataset.count || "0");
+        const decimals = parseInt(el.dataset.decimals || "0", 10);
+        const dur = 1400;
+        const t0 = performance.now();
+        const fmt = (v: number) =>
+          v.toLocaleString("en-US", {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals,
+          });
+        const step = (now: number) => {
+          const p = Math.min(1, (now - t0) / dur);
+          const eased = 1 - Math.pow(1 - p, 3);
+          el.textContent = fmt(target * eased);
+          if (p < 1) requestAnimationFrame(step);
+          else el.textContent = fmt(target);
+        };
+        requestAnimationFrame(step);
+      });
+      io.disconnect();
+    }, { threshold: 0.25 });
+    io.observe(section);
+    return () => io.disconnect();
+  }, [ready, trajectoryData]);
+
+  // 1e. Console pin-in: as the console settles into its sticky position, it
+  // straightens from a slight 3D tilt (buttermax-style "settle" entrance).
+  useEffect(() => {
+    if (!ready || !trajectoryData) return;
+    const shell = consoleShellRef.current;
+    if (!shell) return;
+    const io = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting) {
+        shell.classList.add("is-pinned");
+        io.disconnect();
+      }
+    }, { threshold: 0.2 });
+    io.observe(shell);
+    return () => io.disconnect();
+  }, [ready, trajectoryData]);
+
+  // 1f. Glow pulse — breathes the Sun corona and the Earth/Mars halos so the
+  // scene feels alive even when the sim is paused. Runs on its own rAF.
+  useEffect(() => {
+    if (!ready || !trajectoryData) return;
+    let raf = 0;
+    const t0 = performance.now();
+    const loop = () => {
+      const viewer = viewerRef.current?.cesiumElement;
+      if (viewer) {
+        const t = (performance.now() - t0) / 1000;
+        const sunPulse = 340 + Math.sin(t * 1.7) * 30;
+        const planetPulse = 110 + Math.sin(t * 2.3 + 1) * 14;
+        const sun = viewer.entities.getById("sun-glow");
+        const earth = viewer.entities.getById("earth-glow");
+        const mars = viewer.entities.getById("mars-glow");
+        // (as any: Cesium accepts raw numbers here; the public types say Property)
+        if (sun?.billboard) { (sun.billboard as any).width = sunPulse; (sun.billboard as any).height = sunPulse; }
+        if (earth?.billboard) { (earth.billboard as any).width = planetPulse; (earth.billboard as any).height = planetPulse; }
+        if (mars?.billboard) { (mars.billboard as any).width = planetPulse; (mars.billboard as any).height = planetPulse; }
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [ready, trajectoryData]);
 
   // 1. Initial Cesium Ready Check
   useEffect(() => {
@@ -622,8 +759,10 @@ export default function Globe() {
 
   return (
     <ReactLenis ref={lenisRef} root options={{ lerp: 0.09, smoothWheel: true }}>
-      {/* HERO — portfolio "shutter kif." style landing */}
+      {/* HERO — portfolio "shutter kif." style landing, with a liquid
+          Three.js wireframe blob behind the wordmark (HeroBlob) */}
       <section className="hero" ref={heroRef}>
+        <HeroBlob />
         <div className="hero__stage" ref={stageRef}>
           <span className="hero__tag" aria-hidden="true">✕</span>
           <h1 className="hero__word">ARES</h1>
@@ -640,27 +779,43 @@ export default function Globe() {
         }}><i /></button>
       </section>
 
+      {/* MARQUEE — buttermax-style scrolling ticker */}
+      <div className="marquee" aria-hidden="true">
+        <div className="marquee__track">
+          {[0, 1].map((k) => (
+            <span className="marquee__group" key={k}>
+              <b>PPO GUIDANCE</b><i>✕</i>
+              <b>LOW-THRUST CRUISE</b><i>✕</i>
+              <b>MARS TRANSFER</b><i>✕</i>
+              <b>ISOLATION FOREST</b><i>✕</i>
+              <b>ISP DECAY</b><i>✕</i>
+              <b>11,040 HOURS</b><i>✕</i>
+            </span>
+          ))}
+        </div>
+      </div>
+
       {/* STATS — mission parameters strip (scrolls away before the console pins) */}
-      <section className="stats" id="stats">
+      <section className="stats" id="stats" ref={statsRef}>
         <div className="stats__head">
           <span className="stats__num">02</span>
           <span className="stats__title">mission parameters</span>
         </div>
         <div className="stats__grid">
           <div className="stat">
-            <span className="stat__v">11,040</span>
+            <span className="stat__v"><span data-count="11040" data-decimals="0">11,040</span></span>
             <span className="stat__k">mission hours</span>
           </div>
           <div className="stat">
-            <span className="stat__v">54.7<span className="stat__u">M km</span></span>
+            <span className="stat__v"><span data-count="54.7" data-decimals="1">54.7</span><span className="stat__u">M km</span></span>
             <span className="stat__k">earth → mars distance</span>
           </div>
           <div className="stat">
-            <span className="stat__v">0.289<span className="stat__u">N</span></span>
+            <span className="stat__v"><span data-count="0.289" data-decimals="3">0.289</span><span className="stat__u">N</span></span>
             <span className="stat__k">max PPO thrust</span>
           </div>
           <div className="stat">
-            <span className="stat__v">1782<span className="stat__u">→ 1514.7 s</span></span>
+            <span className="stat__v"><span data-count="1782" data-decimals="0">1782</span><span className="stat__u">→ 1514.7 s</span></span>
             <span className="stat__k">specific impulse decay</span>
           </div>
         </div>
@@ -672,7 +827,7 @@ export default function Globe() {
       </section>
 
       {/* CONSOLE — pinned below the hero + stats */}
-      <div className="console-shell" id="console">
+      <div className="console-shell" id="console" ref={consoleShellRef}>
         <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }} className="bg-black select-none text-slate-200">
       
       {/* 3D Cesium Canvas — data-lenis-prevent so wheel zoom reaches Cesium */}
@@ -706,7 +861,18 @@ export default function Globe() {
             arcType={ArcType.NONE}
           />
         </Entity>
-        {/* SC Trajectory (progressive — grows with animation) */}
+        {/* SC Trajectory (progressive — grows with animation). A wide faint
+            underlay gives the burn trail a neon glow; the crisp line sits on top. */}
+        {scPositions.length >= 2 && (
+          <Entity>
+            <PolylineGraphics
+              positions={scPositions}
+              width={9}
+              material={(isAnomalyActive ? Color.GOLDENROD : Color.CYAN).withAlpha(0.09)}
+              arcType={ArcType.NONE}
+            />
+          </Entity>
+        )}
         {scPositions.length >= 2 && (
           <Entity>
             <PolylineGraphics
@@ -743,6 +909,20 @@ export default function Globe() {
         )}
 
         {/* Celestial Body Entities — rendered as 3D spheres (ellipsoids) */}
+
+        {/* Sun corona — additive glow sprite that pulses (see effect 1f) */}
+        {GLOW_URL && (
+          <Entity id="sun-glow" position={Cartesian3.ZERO}>
+            <BillboardGraphics
+              image={GLOW_URL}
+              width={340}
+              height={340}
+              color={Color.WHITE.withAlpha(0.55)}
+              disableDepthTestDistance={Number.POSITIVE_INFINITY}
+            />
+          </Entity>
+        )}
+
         {/* Sun (Origin) */}
         <Entity id="sun" position={Cartesian3.ZERO} name="Sun">
           <EllipsoidGraphics
@@ -763,6 +943,19 @@ export default function Globe() {
           />
         </Entity>
 
+        {/* Earth halo — soft additive glow hugging the planet */}
+        {GLOW_URL && (
+          <Entity id="earth-glow" position={earthPosNow}>
+            <BillboardGraphics
+              image={GLOW_URL}
+              width={110}
+              height={110}
+              color={Color.DEEPSKYBLUE.withAlpha(0.35)}
+              disableDepthTestDistance={Number.POSITIVE_INFINITY}
+            />
+          </Entity>
+        )}
+
         {/* Earth — 3D sphere with distance readout */}
         <Entity id="earth" position={earthPosNow} name="Earth">
           <EllipsoidGraphics
@@ -782,6 +975,19 @@ export default function Globe() {
             disableDepthTestDistance={Number.POSITIVE_INFINITY}
           />
         </Entity>
+
+        {/* Mars halo — soft additive glow hugging the planet */}
+        {GLOW_URL && (
+          <Entity id="mars-glow" position={marsPosNow}>
+            <BillboardGraphics
+              image={GLOW_URL}
+              width={110}
+              height={110}
+              color={Color.ORANGERED.withAlpha(0.32)}
+              disableDepthTestDistance={Number.POSITIVE_INFINITY}
+            />
+          </Entity>
+        )}
 
         {/* Mars — 3D sphere with distance readout */}
         <Entity id="mars" position={marsPosNow} name="Mars">
@@ -1573,6 +1779,9 @@ export default function Globe() {
         <button className="ctl__b" aria-pressed={inverted} onClick={() => setInverted(!inverted)}>invert</button>
         <button className="ctl__b" aria-pressed={soundOn} onClick={toggleSound}>{soundOn ? "sound on" : "sound off"}</button>
       </div>
+
+      {/* cursor light — soft glow trailing the pointer (difference blend) */}
+      <div className="cursor-light" ref={cursorRef} aria-hidden="true" />
 
       <BootScreen done={!showBoot} />
       <audio ref={audioRef} src="/audio/theme.mp3" loop preload="auto" playsInline muted />
