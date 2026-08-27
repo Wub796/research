@@ -172,9 +172,13 @@ export default function Globe() {
     }
   };
 
-  // Auto-scroll the guidance console to the bottom as the simulation steps forward
+  // Auto-scroll the guidance console to the bottom as the simulation steps forward.
+  // Direct scrollTop (not scrollIntoView) so Lenis never fights it and it doesn't
+  // queue smooth-scrolls at 22fps.
   useEffect(() => {
-    consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = consoleEndRef.current;
+    const scroller = el?.closest("[data-lenis-prevent]");
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
   }, [animationStep, activeRightTab]);
 
   const getConsoleLogs = () => {
@@ -236,30 +240,36 @@ export default function Globe() {
 
   const logs = getConsoleLogs();
 
-  // 1a. User-interaction guard. Any camera gesture (drag, wheel, pinch) raises
-  // the flag for a moment so the auto-framing camera in effect #6 stands down
-  // and the visitor keeps control — even mid-playback or while tracking.
-  // Polls for the viewer (it mounts asynchronously after ready+data), same
-  // pattern as the scene-setup effect.
+  // 1a. User-interaction guard. Drag gestures (left/right/middle button)
+  // raise the flag so the auto-framing camera stands down. When the user
+  // starts dragging, we also re-enable Cesium zoom so wheel/pinch works
+  // for camera control during interaction. On timeout (user stopped), we
+  // disable zoom again so wheel scrolls the page instead.
   useEffect(() => {
     if (!ready || !trajectoryData) return;
     const types = [
       ScreenSpaceEventType.LEFT_DOWN, ScreenSpaceEventType.LEFT_UP,
       ScreenSpaceEventType.RIGHT_DOWN, ScreenSpaceEventType.RIGHT_UP,
       ScreenSpaceEventType.MIDDLE_DOWN, ScreenSpaceEventType.MIDDLE_UP,
-      ScreenSpaceEventType.WHEEL,
-      ScreenSpaceEventType.PINCH_START, ScreenSpaceEventType.PINCH_END,
     ];
     let attached = false;
     let viewerLocal: any = null;
+    const enableZoom = () => {
+      const v = viewerRef.current?.cesiumElement;
+      if (v) (v.scene.screenSpaceCameraController as any).enableZoom = true;
+    };
+    const disableZoom = () => {
+      userInteractingRef.current = false;
+      const v = viewerRef.current?.cesiumElement;
+      if (v) (v.scene.screenSpaceCameraController as any).enableZoom = false;
+    };
     const onInput = () => {
       userInteractingRef.current = true;
+      enableZoom();
       if (interactionTimerRef.current !== null) {
         window.clearTimeout(interactionTimerRef.current);
       }
-      interactionTimerRef.current = window.setTimeout(() => {
-        userInteractingRef.current = false;
-      }, 800);
+      interactionTimerRef.current = window.setTimeout(disableZoom, 800);
     };
     const interval = setInterval(() => {
       const viewer = viewerRef.current?.cesiumElement;
@@ -486,8 +496,16 @@ export default function Globe() {
         new HeadingPitchRange(0, CesiumMath.toRadians(-30), 3.5e11)
       );
       viewer.camera.lookAtTransform(Matrix4.IDENTITY);
+
+      // Disable all zooming (mouse wheel + pinch) so wheel scrolls the page.
+      // The user-interaction guard in effect #1a re-enables zoom when they
+      // drag/rotate the camera, giving them full 3D control on demand.
+      (viewer.scene.screenSpaceCameraController as any).enableZoom = false;
     }, 100);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+
+    };
   }, [ready, trajectoryData]);
 
   // 4. Animation Control Interval Loop
@@ -511,18 +529,30 @@ export default function Globe() {
   }, [isAnimating, trajectoryData, playbackSpeed]);
 
   // 5. Dynamic Camera Tracking (spacecraft chase view or celestial body follow)
-  // While the sim is PLAYING with SC tracking, the mission framing camera in
-  // effect #6 takes over instead so the planets stay in view.
+  // This effect always sets the trackedEntity based on the current UI state:
+  // - trackBody (earth/mars/sun/null) takes priority over trackSC
+  // - trackSC (LOCK SC) only applies when the user explicitly wants SC tracking
+  //   and no specific body is selected (trackBody is null)
+  // The effect fires on EVERY state change to keep the entity in sync.
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement;
     if (!viewer || !ready || !trajectoryData) return;
 
     let target = undefined;
     if (trackBody) {
+      // EARTH or MARS tracking — the user explicitly chose a body
       target = viewer.entities.getById(trackBody);
     } else if (trackSC && !isAnimating) {
+      // LOCK SC while paused — show the spacecraft in isolation
+      target = viewer.entities.getById("spacecraft");
+    } else if (trackSC && isAnimating) {
+      // LOCK SC during playback — effect #6 handles the midpoint framing,
+      // but we still set trackedEntity so Cesium knows which entity is active.
+      // This is needed for the chase camera to work, but effect #6 will
+      // override it with its own lookAt for the midpoint.
       target = viewer.entities.getById("spacecraft");
     }
+    // If !trackSC && !trackBody → target is undefined, Cesium uses free camera
     viewer.trackedEntity = target || undefined;
   }, [trackSC, trackBody, isAnimating, ready, trajectoryData]);
 
@@ -572,14 +602,20 @@ export default function Globe() {
   }, [scPositionsAll, earthPositions, animationStep]);
 
   // 6. Mission framing camera: while the simulation plays with SC tracking
-  // engaged, frame the midpoint between the spacecraft and its Mars target so
+  // engaged AND the user has NOT explicitly chosen a celestial body (trackBody
+  // is null), frame the midpoint between the spacecraft and its Mars target so
   // BOTH stay in view. Cesium's trackedEntity chase view re-points the camera
   // at the spacecraft alone, which lets the planets drift out of frame.
   // If the visitor is actively dragging/zooming (userInteractingRef), stand
   // down and let them keep control; framing resumes once they let go.
+  // KEY FIX: Added !trackBody guard — if user clicked SUN/EARTH/MARS, we
+  // don't override their choice with our midpoint framing.
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement;
     if (!viewer || !ready || !trajectoryData || !isAnimating || !trackSC || userInteractingRef.current) return;
+    // KEY FIX: If the user clicked SUN/EARTH/MARS, trackBody is set, and we
+    // should NOT override their choice with the midpoint framing.
+    if (trackBody) return;
     const scPos = scPositionsAll[animationStep];
     const marsPos = marsPositions[animationStep];
     if (!scPos || !marsPos) return;
@@ -590,7 +626,7 @@ export default function Globe() {
       new HeadingPitchRange(0, CesiumMath.toRadians(-35), Math.max(dist * 2.2, 1.5e10))
     );
     viewer.camera.lookAtTransform(Matrix4.IDENTITY);
-  }, [animationStep, isAnimating, trackSC, scPositionsAll, marsPositions, ready, trajectoryData]);
+  }, [animationStep, isAnimating, trackSC, trackBody, scPositionsAll, marsPositions, ready, trajectoryData]);
 
   if (!ready || !trajectoryData) {
     return <BootScreen done={false} />;
@@ -830,8 +866,8 @@ export default function Globe() {
       <div className="console-shell" id="console" ref={consoleShellRef}>
         <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }} className="bg-black select-none text-slate-200">
       
-      {/* 3D Cesium Canvas — data-lenis-prevent so wheel zoom reaches Cesium */}
-      <div data-lenis-prevent style={{ position: "absolute", inset: 0 }}>
+      {/* 3D Cesium Canvas — wheel events captured on canvas to prevent Cesium zoom, allow page scroll */}
+      <div style={{ position: "absolute", inset: 0 }}>
       <Viewer
         ref={viewerRef}
         full
