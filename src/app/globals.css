@@ -215,13 +215,21 @@ html.is-invert .text-slate-500{color:#64748b}
   100%{transform:translate(-50%,.9rem);opacity:0}
 }
 
-/* portfolio-style corner controls (invert / sound) */
+/* portfolio-style corner controls (invert / sound). Anchored to the hero's
+   top-right corner so they scroll away with it — they never float over the
+   pinned console header. A second set is docked inside the console header
+   (.ctl--dock) so the controls stay reachable once the console pins. */
 .ctl{
-  position:fixed;
+  position:absolute;
   top:1rem;right:1rem;
   z-index:80;
   display:flex;gap:.5rem;
   font-family:var(--f-vcr);
+}
+.ctl--dock{
+  position:static;
+  z-index:auto;
+  gap:.4rem;
 }
 .ctl__b{
   background:var(--paper);
@@ -410,6 +418,9 @@ html.is-invert .text-slate-500{color:#64748b}
   inset:0;
   z-index:0;
   pointer-events:none;
+  transform:translate3d(0,0,0);
+  will-change:transform,opacity;
+  transition:opacity .2s linear;
 }
 .hero__stage{
   position:relative;

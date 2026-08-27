@@ -122,6 +122,9 @@ export default function Globe() {
   // Scroll progress (0→1) and current section (1 hero, 2 stats, 3 console)
   const [scrollPct, setScrollPct] = useState<number>(0);
   const [sectionIdx, setSectionIdx] = useState<number>(1);
+  // True once the page is scrolled to the bottom (console fills the viewport)
+  // — the only state where the 3D view accepts wheel/pinch zoom.
+  const [atBottom, setAtBottom] = useState<boolean>(false);
   
   const viewerRef = useRef<CesiumComponentRef<CesiumViewer>>(null);
   const consoleEndRef = useRef<HTMLDivElement>(null);
@@ -140,6 +143,15 @@ export default function Globe() {
   // auto-framing camera stands down so the view never fights their hand.
   const userInteractingRef = useRef(false);
   const interactionTimerRef = useRef<number | null>(null);
+  // True once the page is scrolled to the bottom — the only state where
+  // Cesium wheel/pinch zoom is enabled (the console fills the viewport).
+  const atBottomRef = useRef(false);
+  // Camera follow state. The target is eased toward the latest trajectory
+  // sample, avoiding the visible 10-hour step jumps during playback.
+  const lastFollowRef = useRef<{ target: Cartesian3; mode: string } | null>(null);
+  const followRafRef = useRef<number | null>(null);
+  const followTargetRef = useRef<Cartesian3 | null>(null);
+  const followModeRef = useRef("none");
 
   // Invert: flip the B&W design tokens on <html> (like the portfolio's
   // body.is-invert). Every surface and cut-out flips together.
@@ -240,11 +252,13 @@ export default function Globe() {
 
   const logs = getConsoleLogs();
 
-  // 1a. User-interaction guard. Drag gestures (left/right/middle button)
-  // raise the flag so the auto-framing camera stands down. When the user
-  // starts dragging, we also re-enable Cesium zoom so wheel/pinch works
-  // for camera control during interaction. On timeout (user stopped), we
-  // disable zoom again so wheel scrolls the page instead.
+  // 1a. Camera zoom policy + user-interaction guard.
+  // Zoom policy: wheel/pinch zoom is only enabled once the page is scrolled
+  // to the bottom — i.e. when the console (with the 3D view) fills the
+  // viewport. While scrolling through the hero/stats, wheel scrolls the page
+  // instead of fighting the camera.
+  // Interaction guard: drag gestures raise the flag so the auto-follow camera
+  // (effect #6) stands down for a beat; after the timeout the follow resumes.
   useEffect(() => {
     if (!ready || !trajectoryData) return;
     const types = [
@@ -254,22 +268,24 @@ export default function Globe() {
     ];
     let attached = false;
     let viewerLocal: any = null;
-    const enableZoom = () => {
+    const syncZoom = () => {
+      const doc = document.documentElement;
+      const atBottom = window.innerHeight + window.scrollY >= doc.scrollHeight - 4;
+      atBottomRef.current = atBottom;
+      setAtBottom((prev) => (prev === atBottom ? prev : atBottom));
       const v = viewerRef.current?.cesiumElement;
-      if (v) (v.scene.screenSpaceCameraController as any).enableZoom = true;
-    };
-    const disableZoom = () => {
-      userInteractingRef.current = false;
-      const v = viewerRef.current?.cesiumElement;
-      if (v) (v.scene.screenSpaceCameraController as any).enableZoom = false;
+      if (v) (v.scene.screenSpaceCameraController as any).enableZoom = atBottom;
     };
     const onInput = () => {
       userInteractingRef.current = true;
-      enableZoom();
+      syncZoom();
       if (interactionTimerRef.current !== null) {
         window.clearTimeout(interactionTimerRef.current);
       }
-      interactionTimerRef.current = window.setTimeout(disableZoom, 800);
+      interactionTimerRef.current = window.setTimeout(() => {
+        userInteractingRef.current = false;
+        syncZoom();
+      }, 800);
     };
     const interval = setInterval(() => {
       const viewer = viewerRef.current?.cesiumElement;
@@ -277,9 +293,15 @@ export default function Globe() {
       attached = true;
       viewerLocal = viewer;
       clearInterval(interval);
+      syncZoom();
       types.forEach((t) => viewer.screenSpaceEventHandler.setInputAction(onInput, t));
     }, 100);
+    window.addEventListener("scroll", syncZoom, { passive: true });
+    window.addEventListener("resize", syncZoom);
+    syncZoom();
     return () => {
+      window.removeEventListener("scroll", syncZoom);
+      window.removeEventListener("resize", syncZoom);
       clearInterval(interval);
       if (attached && viewerLocal) {
         types.forEach((t) => viewerLocal.screenSpaceEventHandler.removeInputAction(t));
@@ -493,14 +515,13 @@ export default function Globe() {
       // then release the transform so the user can rotate freely.
       viewer.camera.lookAt(
         Cartesian3.ZERO,
-        new HeadingPitchRange(0, CesiumMath.toRadians(-30), 3.5e11)
+        new HeadingPitchRange(0, CesiumMath.toRadians(-35), 3.0e11)
       );
       viewer.camera.lookAtTransform(Matrix4.IDENTITY);
 
-      // Disable all zooming (mouse wheel + pinch) so wheel scrolls the page.
-      // The user-interaction guard in effect #1a re-enables zoom when they
-      // drag/rotate the camera, giving them full 3D control on demand.
-      (viewer.scene.screenSpaceCameraController as any).enableZoom = false;
+      // Zoom policy is owned by the interaction guard in effect #1a: wheel
+      // zoom is enabled only when the page is scrolled to the bottom (the
+      // console fills the viewport); otherwise wheel scrolls the page.
     }, 100);
     return () => {
       clearInterval(interval);
@@ -528,33 +549,9 @@ export default function Globe() {
     return () => clearInterval(interval);
   }, [isAnimating, trajectoryData, playbackSpeed]);
 
-  // 5. Dynamic Camera Tracking (spacecraft chase view or celestial body follow)
-  // This effect always sets the trackedEntity based on the current UI state:
-  // - trackBody (earth/mars/sun/null) takes priority over trackSC
-  // - trackSC (LOCK SC) only applies when the user explicitly wants SC tracking
-  //   and no specific body is selected (trackBody is null)
-  // The effect fires on EVERY state change to keep the entity in sync.
-  useEffect(() => {
-    const viewer = viewerRef.current?.cesiumElement;
-    if (!viewer || !ready || !trajectoryData) return;
-
-    let target = undefined;
-    if (trackBody) {
-      // EARTH or MARS tracking — the user explicitly chose a body
-      target = viewer.entities.getById(trackBody);
-    } else if (trackSC && !isAnimating) {
-      // LOCK SC while paused — show the spacecraft in isolation
-      target = viewer.entities.getById("spacecraft");
-    } else if (trackSC && isAnimating) {
-      // LOCK SC during playback — effect #6 handles the midpoint framing,
-      // but we still set trackedEntity so Cesium knows which entity is active.
-      // This is needed for the chase camera to work, but effect #6 will
-      // override it with its own lookAt for the midpoint.
-      target = viewer.entities.getById("spacecraft");
-    }
-    // If !trackSC && !trackBody → target is undefined, Cesium uses free camera
-    viewer.trackedEntity = target || undefined;
-  }, [trackSC, trackBody, isAnimating, ready, trajectoryData]);
+  // 5. (Camera tracking is handled entirely by the unified follow in effect
+  // #6 below — it never uses Cesium's trackedEntity, whose auto-view caused
+  // camera jumps and flashing.)
 
   // Precompute Cartesian3 arrays for orbital lines (memoized to prevent worker allocation spam)
   const earthPositions = useMemo(() => {
@@ -601,32 +598,84 @@ export default function Globe() {
     return [scPos, earthPos];
   }, [scPositionsAll, earthPositions, animationStep]);
 
-  // 6. Mission framing camera: while the simulation plays with SC tracking
-  // engaged AND the user has NOT explicitly chosen a celestial body (trackBody
-  // is null), frame the midpoint between the spacecraft and its Mars target so
-  // BOTH stay in view. Cesium's trackedEntity chase view re-points the camera
-  // at the spacecraft alone, which lets the planets drift out of frame.
-  // If the visitor is actively dragging/zooming (userInteractingRef), stand
-  // down and let them keep control; framing resumes once they let go.
-  // KEY FIX: Added !trackBody guard — if user clicked SUN/EARTH/MARS, we
-  // don't override their choice with our midpoint framing.
+  // 6. Manual camera follow — the single owner of tracking views. Rather than
+  // re-centering the camera on the target every tick (which yanked the view
+  // back whenever the visitor zoomed or panned), this translates the camera
+  // by the target's movement delta since the last tick: the target keeps its
+  // current screen position while the visitor's zoom distance and orientation
+  // are preserved exactly. If the visitor drags or zooms, the view stays where
+  // they put it — the follow only ever shifts by the target's own motion.
+  //   - trackBody earth/mars → follow that body
+  //   - trackSC + playing    → follow the SC↔Mars midpoint (both in view)
+  //   - trackSC + paused     → follow the spacecraft
+  // Stands down during an active drag (userInteractingRef) but keeps updating
+  // the reference target, so resuming never causes a jump.
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement;
-    if (!viewer || !ready || !trajectoryData || !isAnimating || !trackSC || userInteractingRef.current) return;
-    // KEY FIX: If the user clicked SUN/EARTH/MARS, trackBody is set, and we
-    // should NOT override their choice with the midpoint framing.
-    if (trackBody) return;
-    const scPos = scPositionsAll[animationStep];
-    const marsPos = marsPositions[animationStep];
-    if (!scPos || !marsPos) return;
-    const mid = Cartesian3.midpoint(scPos, marsPos, new Cartesian3());
-    const dist = Cartesian3.distance(scPos, marsPos);
-    viewer.camera.lookAt(
-      mid,
-      new HeadingPitchRange(0, CesiumMath.toRadians(-35), Math.max(dist * 2.2, 1.5e10))
-    );
-    viewer.camera.lookAtTransform(Matrix4.IDENTITY);
-  }, [animationStep, isAnimating, trackSC, trackBody, scPositionsAll, marsPositions, ready, trajectoryData]);
+    if (!viewer || !ready || !trajectoryData) return;
+    viewer.trackedEntity = undefined;
+
+    const mode = trackBody
+      ? `body:${trackBody}`
+      : trackSC
+        ? isAnimating
+          ? "sc-live"
+          : "sc-paused"
+        : "none";
+
+    let target: Cartesian3 | null = null;
+    if (trackBody === "earth" || trackBody === "mars") {
+      const positions = trackBody === "earth" ? earthPositions : marsPositions;
+      target = positions[animationStep] ?? null;
+    } else if (trackSC) {
+      const scPos = scPositionsAll[animationStep];
+      if (scPos) {
+        if (isAnimating) {
+          const marsPos = marsPositions[animationStep];
+          if (marsPos) target = Cartesian3.midpoint(scPos, marsPos, new Cartesian3());
+        } else {
+          target = scPos;
+        }
+      }
+    }
+
+    if (!target) {
+      lastFollowRef.current = null;
+      followTargetRef.current = null;
+      if (followRafRef.current !== null) cancelAnimationFrame(followRafRef.current);
+      followRafRef.current = null;
+      return;
+    }
+
+    const prev = lastFollowRef.current;
+    lastFollowRef.current = { target: target.clone(), mode };
+
+    // Keep the follow on one continuous render loop. The old per-sample RAF
+    // restarted every 45ms, which left the camera in a repeated start/stop
+    // easing cycle and produced visible judder. This loop interpolates toward
+    // the newest target every frame, without touching heading/pitch/range.
+    followTargetRef.current = target.clone();
+    followModeRef.current = mode;
+    if (prev && prev.mode === mode && !userInteractingRef.current && followRafRef.current === null) {
+      const tick = () => {
+        const currentTarget = followTargetRef.current;
+        const current = viewerRef.current?.cesiumElement;
+        if (!current || !currentTarget || userInteractingRef.current || followModeRef.current === "none") {
+          followRafRef.current = null;
+          return;
+        }
+        const previousTarget = lastFollowRef.current?.target;
+        if (previousTarget) {
+          const delta = Cartesian3.subtract(currentTarget, previousTarget, new Cartesian3());
+          const smoothed = Cartesian3.multiplyByScalar(delta, 0.16, new Cartesian3());
+          current.camera.position = Cartesian3.add(current.camera.positionWC, smoothed, new Cartesian3());
+          current.camera.lookAtTransform(Matrix4.IDENTITY);
+        }
+        followRafRef.current = requestAnimationFrame(tick);
+      };
+      followRafRef.current = requestAnimationFrame(tick);
+    }
+  }, [animationStep, isAnimating, trackSC, trackBody, scPositionsAll, earthPositions, marsPositions, ready, trajectoryData]);
 
   if (!ready || !trajectoryData) {
     return <BootScreen done={false} />;
@@ -666,9 +715,20 @@ export default function Globe() {
     return closestIdx;
   };
 
-  // Camera presets — use lookAt to position camera at a given range from the
-  // target, then immediately release with lookAtTransform(IDENTITY) so the
-  // user can still rotate/zoom freely after the jump.
+  // After a camera-option jump, make wheel zoom live immediately. The option
+  // buttons are only reachable once the console is pinned at the bottom — the
+  // exact state where the zoom policy (effect #1a) allows zooming — so this
+  // just re-asserts the policy rather than overriding it.
+  const ensureZoomEnabled = () => {
+    const v = viewerRef.current?.cesiumElement;
+    if (v) (v.scene.screenSpaceCameraController as any).enableZoom = atBottomRef.current;
+  };
+
+  // Camera presets — use lookAt to position the camera at a good range from
+  // the target, then immediately release with lookAtTransform(IDENTITY) so the
+  // user can still rotate/zoom freely after the jump. Effect #6 then follows
+  // the chosen target by translating the camera with its motion — never
+  // re-centering — so whatever the user does to the view afterwards sticks.
   const focusSun = () => {
     const viewer = viewerRef.current?.cesiumElement;
     if (!viewer) return;
@@ -677,39 +737,68 @@ export default function Globe() {
     viewer.trackedEntity = undefined;
     viewer.camera.lookAt(
       Cartesian3.ZERO,
-      new HeadingPitchRange(0, CesiumMath.toRadians(-30), 3.5e11)
+      new HeadingPitchRange(0, CesiumMath.toRadians(-35), 3.0e11)
     );
     viewer.camera.lookAtTransform(Matrix4.IDENTITY);
+    ensureZoomEnabled();
   };
 
   const focusEarth = () => {
     const viewer = viewerRef.current?.cesiumElement;
     if (!viewer) return;
     setTrackSC(false);
-    // Jump to Earth now, then keep following it as the simulation advances
+    // Jump to Earth now, then keep following it as the simulation advances.
+    // Earth stays the CENTER of the view, but at 1.0e11 the shot is zoomed
+    // out enough to keep the sun, the SC trajectory, and Mars in context.
     const ep = earthPositions[animationStep];
     if (!ep) return;
     viewer.camera.lookAt(
       ep,
-      new HeadingPitchRange(0, CesiumMath.toRadians(-30), 5e10)
+      new HeadingPitchRange(0, CesiumMath.toRadians(-32), 1.0e11)
     );
     viewer.camera.lookAtTransform(Matrix4.IDENTITY);
     setTrackBody("earth");
+    ensureZoomEnabled();
   };
 
   const focusMars = () => {
     const viewer = viewerRef.current?.cesiumElement;
     if (!viewer) return;
     setTrackSC(false);
-    // Jump to Mars now, then keep following it as the simulation advances
+    // Jump to Mars now, then keep following it as the simulation advances.
+    // Mars stays the CENTER of the view, but at 9e10 the shot is zoomed out
+    // enough to keep Earth, the SC trajectory, and the sun in context.
     const mp = marsPositions[animationStep];
     if (!mp) return;
     viewer.camera.lookAt(
       mp,
-      new HeadingPitchRange(0, CesiumMath.toRadians(-30), 5e10)
+      new HeadingPitchRange(0, CesiumMath.toRadians(-32), 9e10)
     );
     viewer.camera.lookAtTransform(Matrix4.IDENTITY);
     setTrackBody("mars");
+    ensureZoomEnabled();
+  };
+
+  // Frame the SC↔Mars midpoint (during playback) or the spacecraft (paused) —
+  // the initial jump when LOCK SC is engaged. After this, effect #6 follows
+  // relatively, so this framing is never re-applied and the user's view stays.
+  const frameSC = (animating = isAnimating) => {
+    const viewer = viewerRef.current?.cesiumElement;
+    if (!viewer) return;
+    const scPos = scPositionsAll[animationStep];
+    if (!scPos) return;
+    if (animating) {
+      const marsPos = marsPositions[animationStep];
+      if (!marsPos) return;
+      const mid = Cartesian3.midpoint(scPos, marsPos, new Cartesian3());
+      // Both bodies in view: range adapts to the SC→Mars gap, floored so the
+      // pair stays legible even when they're nearly docked.
+      const dist = Math.max(Cartesian3.distance(scPos, marsPos) * 1.65, 2.8e10);
+      viewer.camera.lookAt(mid, new HeadingPitchRange(0, CesiumMath.toRadians(-52), dist));
+    } else {
+      viewer.camera.lookAt(scPos, new HeadingPitchRange(0, CesiumMath.toRadians(-52), 2.2e10));
+    }
+    viewer.camera.lookAtTransform(Matrix4.IDENTITY);
   };
 
   // Extract current telemetry values based on animation step
@@ -805,13 +894,24 @@ export default function Globe() {
           <p className="hero__word hero__word--one" aria-hidden="true">1.</p>
           <span className="hero__mark" aria-hidden="true">✦</span>
         </div>
+
+        {/* portfolio-style corner controls — anchored to the hero top-right,
+            scroll away with it so they never cover the pinned console header */}
+        <div className="ctl">
+          <button className="ctl__b" aria-pressed={inverted} onClick={() => setInverted(!inverted)}>invert</button>
+          <button className="ctl__b" aria-pressed={soundOn} onClick={toggleSound}>{soundOn ? "sound on" : "sound off"}</button>
+        </div>
+
         <div className="hero__meta" ref={metaRef}>
           <span>PPO guidance &amp; trajectory scheduler</span>
           <span>Earth → Mars · 11,040 h · thruster decay simulation</span>
         </div>
         <span className="hero__scrolllabel">scroll</span>
         <button className="hero__cue" aria-label="Scroll to console" onClick={() => {
-          lenisRef.current?.lenis?.scrollTo("#console", { offset: 0 });
+          // Scroll to the true document bottom (Lenis "bottom" = its limit),
+          // not the console's pin position, so the at-bottom zoom policy
+          // engages the moment the cue settles.
+          lenisRef.current?.lenis?.scrollTo("bottom");
         }}><i /></button>
       </section>
 
@@ -866,8 +966,11 @@ export default function Globe() {
       <div className="console-shell" id="console" ref={consoleShellRef}>
         <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }} className="bg-black select-none text-slate-200">
       
-      {/* 3D Cesium Canvas — wheel events captured on canvas to prevent Cesium zoom, allow page scroll */}
-      <div style={{ position: "absolute", inset: 0 }}>
+      {/* 3D Cesium Canvas — at the bottom of the page (console pinned) the
+          canvas takes over wheel input for camera zoom; while scrolling the
+          page, wheel passes through to Lenis. data-lenis-prevent-wheel stops
+          Lenis from double-scrolling once the canvas owns the wheel. */}
+      <div style={{ position: "absolute", inset: 0 }} {...(atBottom ? { "data-lenis-prevent-wheel": "" } : {})}>
       <Viewer
         ref={viewerRef}
         full
@@ -1114,8 +1217,12 @@ export default function Globe() {
           </div>
         </div>
 
-        {/* Right cluster: mission phase + live badge */}
+        {/* Right cluster: invert/sound docked + mission phase + live badge */}
         <div className="flex items-center gap-3">
+          <div className="ctl ctl--dock">
+            <button className="ctl__b" aria-pressed={inverted} onClick={() => setInverted(!inverted)}>invert</button>
+            <button className="ctl__b" aria-pressed={soundOn} onClick={toggleSound}>{soundOn ? "sound on" : "sound off"}</button>
+          </div>
           <span className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--hairline-strong)] bg-white/[0.04] text-[9px] font-mono font-bold tracking-widest text-[var(--ink-dim)] uppercase">
             <span className="w-1.5 h-1.5 rounded-full bg-[var(--ink)] animate-pulse"></span>
             {getMissionPhase()}
@@ -1627,8 +1734,12 @@ export default function Globe() {
                 const next = !isAnimating;
                 setIsAnimating(next);
                 if (next) {
+                  const wasTracking = trackSC;
                   setTrackSC(true);  // auto-lock SC on play
                   setTrackBody(null);  // stop following any single planet
+                  // Frame the SC→Mars pair once when tracking first engages
+                  // (not on a plain pause→resume of an existing session).
+                  if (!wasTracking) frameSC(true);
                 }
               }}
               className={`p-2 px-3.5 rounded-lg transition-all font-semibold flex items-center gap-1.5 text-xs ${
@@ -1695,8 +1806,11 @@ export default function Globe() {
             <div className="w-px h-3.5 bg-white/20 mx-1"></div>
             <button
               onClick={() => {
-                setTrackSC(!trackSC);
+                const next = !trackSC;
+                setTrackSC(next);
                 setTrackBody(null);
+                ensureZoomEnabled();
+                if (next) frameSC();
               }}
               className={`px-2 py-1.5 rounded-md text-[9px] font-mono font-bold flex items-center gap-1 transition-all ${
                 trackSC 
@@ -1808,12 +1922,6 @@ export default function Globe() {
           <div className="rail__fill" style={{ height: `${Math.round(scrollPct * 100)}%` }} />
         </div>
         <div className="rail__idx">{String(sectionIdx).padStart(2, "0")}<i>/03</i></div>
-      </div>
-
-      {/* portfolio-style corner controls */}
-      <div className="ctl">
-        <button className="ctl__b" aria-pressed={inverted} onClick={() => setInverted(!inverted)}>invert</button>
-        <button className="ctl__b" aria-pressed={soundOn} onClick={toggleSound}>{soundOn ? "sound on" : "sound off"}</button>
       </div>
 
       {/* cursor light — soft glow trailing the pointer (difference blend) */}
