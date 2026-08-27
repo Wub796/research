@@ -30,37 +30,45 @@ npm run dev -- -p 3000     # Next.js 15 dev server
 
 ### Detaching (macOS)
 
-⚠️ **`launchctl submit` is unreliable for this project.** The repo lives under
-`~/Documents`, and macOS TCC blocks launchd-spawned jobs from *executing* script
-files inside that tree (exit 126 / empty logs); inline `-c` jobs usually hang
-`next dev` at 0% CPU without binding the port. One form DID work end-to-end
-(ready in ~1.1s, port bound) — a **block-redirect** with no env-var prefix:
+The command runner reaps its own process group between tool calls, so plain
+`nohup ... &` servers die the moment the call ends. launchd jobs survive — but
+⚠️ **launchd's default PATH has no `/opt/homebrew/bin`, so bare `npm` fails with
+"command not found" → exit 1 → a silent ~3s respawn loop with an empty log.**
+That (not TCC) is the root cause of most launchd failures here; launchd CAN
+execute and write inside `~/Documents` for this project.
+
+Verified working form (boots in ~1s, port bound, survives across calls):
 
 ```bash
-launchctl submit -l <label> -- /bin/sh -c "{ cd <project> && exec <node> node_modules/next/dist/bin/next dev -p 3000; } > /tmp/next.log 2>&1"
+launchctl submit -l <label> -- /bin/sh -c 'echo "sh-alive $(date)" > /tmp/next.log; \
+  cd <project> && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin \
+  exec npm run dev -- -p 3000 >> /tmp/next.log 2>&1'
 ```
 
-Notes: the log redirect must wrap the WHOLE block (`{ ...; } > log`), not just
-`exec ... > log`; env prefixes like `NEXT_TELEMETRY_DISABLED=1 exec` made it exit
-1 silently. Prefer the python method below — it starts reliably — and fall back
-to the launchd block form only if the python process keeps getting reaped.
+Debug tips: put an `echo` marker BEFORE `cd` in the job payload — if the marker
+lands but nothing follows, `cd`/`exec` failed; if no marker at all, the payload
+never ran. Probe launchd write/execute access with a one-line `echo > /tmp/f`
+job. Remove the job with `launchctl remove <label>` when done.
 
-Working detach method (used for the live preview):
+Fallback (if launchd misbehaves):
 
 ```bash
 python3 -c "
 import subprocess
 log = open('<project>/.freebuff/preview-<id>.log', 'w')
-p = subprocess.Popen(['nohup','npm','run','dev','--','-p','3000'],
+p = subprocess.Popen(['npm','run','dev','--','-p','3000'],
     stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
     start_new_session=True, cwd='<project>')
 print(p.pid)
 "
 ```
 
-The process survives across tool calls within a session; if it dies, re-run the
-same command. Register the preview with the URL plus the **listener** pid from
-`lsof -iTCP:3000 -sTCP:LISTEN` (the `next-server` node process, not the npm parent).
+`start_new_session=True` (a new POSIX session) is what lets the child survive
+the reaper; plain `nohup ... & disown` from the runner shell does not.
+
+Register the preview with the URL plus the **listener** pid from
+`lsof -iTCP:3000 -sTCP:LISTEN` (the `next-server` node process, not the npm/sh
+parent).
 
 ## 3. Stack notes
 

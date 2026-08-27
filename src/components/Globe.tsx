@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, type CSSProperties } from "react";
 import { ReactLenis, type LenisRef } from "lenis/react";
 import { 
   Play, 
@@ -931,17 +931,65 @@ export default function Globe() {
         </div>
       </div>
 
-      {/* STATS — mission parameters strip (scrolls away before the console pins) */}
+      {/* STATS — mission flight-profile strip: four events placed on a true
+          0→11,040h scale. The anomaly (1,497h) sits 3h before the Isp failure
+          lock (1,500h) — that gap is the whole story, and the scale shows it. */}
       <section className="stats" id="stats" ref={statsRef}>
         <div className="stats__head">
           <span className="stats__num">02</span>
-          <span className="stats__title">mission parameters</span>
+          <span className="stats__title">mission flight profile</span>
         </div>
-        <div className="stats__grid">
-          <div className="stat">
-            <span className="stat__v"><span data-count="11040" data-decimals="0">11,040</span></span>
-            <span className="stat__k">mission hours</span>
+
+        <div className="profile">
+          {/* scale rail: 0 … 11,040h with the mid-rail spanning the timeline */}
+          <div className="profile__rail" aria-hidden="true">
+            <span className="profile__zero">T+0000</span>
+            <span className="profile__rail-ticks"><i /><i /><i /><i /><i /></span>
+            <span className="profile__total" data-count="11040" data-decimals="0">11,040</span>
+            <span className="profile__unit">H</span>
           </div>
+
+          {/* events sit at their true fraction of 11,040h */}
+          <div className="profile__track">
+            {/* mission wave — a hairline sweeping left→right as it enters */}
+            <i className="profile__sweep" aria-hidden="true" />
+
+            <div className="profile__evt" data-t="T+0000" style={{ "--at": "0%" } as CSSProperties}>
+              <span className="profile__dot" />
+              <div className="profile__card">
+                <span className="profile__t">burn start</span>
+                <span className="profile__v">earth departure</span>
+              </div>
+            </div>
+
+            <div className="profile__evt" data-t="H1497" style={{ "--at": "13.56%" } as CSSProperties}>
+              <span className="profile__dot profile__dot--alarm" />
+              <div className="profile__card">
+                <span className="profile__t">hour 1,497</span>
+                <span className="profile__v">anomaly flagged</span>
+              </div>
+            </div>
+
+            <div className="profile__evt" data-t="H1500" style={{ "--at": "13.59%" } as CSSProperties}>
+              <span className="profile__dot profile__dot--bad" />
+              <div className="profile__card">
+                <span className="profile__t">hour 1,500</span>
+                <span className="profile__v">isp failure lock</span>
+              </div>
+            </div>
+
+            <div className="profile__evt" data-t="T+11040" style={{ "--at": "100%" } as CSSProperties}>
+              <span className="profile__dot" />
+              <div className="profile__card">
+                <span className="profile__t">hour 11,040</span>
+                <span className="profile__v">mars arrival</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* supporting numbers, left of the timeline */}
+        <div className="stats__grid">
           <div className="stat">
             <span className="stat__v"><span data-count="54.7" data-decimals="1">54.7</span><span className="stat__u">M km</span></span>
             <span className="stat__k">earth → mars distance</span>
@@ -953,6 +1001,10 @@ export default function Globe() {
           <div className="stat">
             <span className="stat__v"><span data-count="1782" data-decimals="0">1782</span><span className="stat__u">→ 1514.7 s</span></span>
             <span className="stat__k">specific impulse decay</span>
+          </div>
+          <div className="stat">
+            <span className="stat__v"><span data-count="3" data-decimals="0">3</span><span className="stat__u">h</span></span>
+            <span className="stat__k">warning → lock margin</span>
           </div>
         </div>
         <p className="stats__note">
