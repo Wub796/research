@@ -38,3 +38,6 @@ next-env.d.ts
 
 # virtual environments
 /.venv*/
+
+# freebuff dev-server runtime logs (churn on every restart; never tracked)
+.freebuff/*.log
