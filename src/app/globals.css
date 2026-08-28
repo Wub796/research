@@ -333,6 +333,8 @@ html.is-invert .text-slate-500{color:#64748b}
 }
 .stats__num{ font-size: .65rem; letter-spacing: .3em; color: var(--ink-faint); }
 .stats__title{ font-size: .7rem; letter-spacing: .35em; color: var(--ink-dim); }
+.stats__head{ flex-wrap:wrap; row-gap:.35rem; }
+.stats__head .stats__title{ margin-left:.15rem; }
 
 /* ---- mission flight-profile timeline ----
    one horizontal scale, 0 … 11,040h. each event sits at its true
@@ -346,6 +348,7 @@ html.is-invert .text-slate-500{color:#64748b}
   display: flex;
   align-items: baseline;
   gap: .9rem;
+  min-width: 0;
   font-family: var(--f-vcr);
   border-top: 1px solid var(--hairline-strong);
   padding-top: .7rem;
@@ -357,6 +360,9 @@ html.is-invert .text-slate-500{color:#64748b}
 }
 .profile__total{
   margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   font-size: clamp(3rem, 9vw, 6.5rem);
   line-height: .8;
   letter-spacing: -.01em;
@@ -390,6 +396,8 @@ html.is-invert .text-slate-500{color:#64748b}
   list-style: none;
   margin: -.2rem 0 0;
   padding: 0;
+  max-width: 100%;
+  overflow: hidden;
   position: relative;
   height: clamp(4rem, 12vh, 6rem);
 }
@@ -536,6 +544,13 @@ html.is-invert .text-slate-500{color:#64748b}
 }
 @media (max-width: 820px){
   .stats__grid{ grid-template-columns: repeat(2, 1fr); }
+  .profile__rail{ gap:.5rem; }
+  .profile__zero{ font-size:.48rem; letter-spacing:.16em; }
+  .profile__total{ font-size:clamp(2.25rem, 15vw, 4rem); }
+  .profile__unit{ transform:translateY(1rem); }
+  .profile__track{ overflow:visible; }
+  .profile__evt:nth-child(3){ --nudge:-28px; }
+  .profile__evt:nth-child(4){ --nudge:28px; }
   .profile__evt .profile__card{ display: none; }
   .profile__evt::after{
     content: attr(data-t);
@@ -547,6 +562,25 @@ html.is-invert .text-slate-500{color:#64748b}
     white-space: nowrap;
   }
 }
+
+/* Orbit paper figure — keep the source image legible as a figure, not a loose thumbnail */
+.orbit-figure figure{ margin:0; }
+.orbit-figure__legend{
+  display:flex;
+  flex-wrap:wrap;
+  gap:.7rem 1rem;
+  padding:.55rem .7rem;
+  border-top:1px solid var(--hairline);
+  color:var(--ink-dim);
+  font: .52rem var(--f-vcr);
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.orbit-figure__legend span{ display:inline-flex; align-items:center; gap:.35rem; }
+.orbit-figure__swatch{ width:.48rem; height:.48rem; display:inline-block; border-radius:50%; }
+.orbit-figure__swatch--earth{ background:#22d3ee; }
+.orbit-figure__swatch--mars{ background:#f87171; }
+.orbit-figure__swatch--transfer{ background:#67e8f9; box-shadow:0 0 0 2px rgba(103,232,249,.18); }
 
 /* ============================================================
    SCROLL PROGRESS RAIL

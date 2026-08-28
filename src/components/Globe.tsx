@@ -1576,30 +1576,40 @@ export default function Globe() {
 
           {/* TAB 2: Trajectory Image */}
           {activeRightTab === "trajectory" && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-white/5">
-                <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">Paper Figure: 3D Heliocentric trajectory</span>
-                <button 
+            <div className="orbit-figure space-y-3">
+              <div className="flex items-start justify-between gap-3 pb-2 border-b border-[var(--hairline)]">
+                <div>
+                  <span className="block text-[10px] font-mono uppercase text-[var(--ink)] font-bold tracking-wide">Paper Figure · heliocentric transfer</span>
+                  <span className="block mt-1 text-[9px] font-mono text-[var(--ink-faint)]">Fig. 01 / top view · not to scale</span>
+                </div>
+                <button
                   onClick={() => setZoomPlot("/figures/3d_heliocentric_trajectory.png")}
-                  className="p-1 hover:bg-white/5 rounded text-[var(--ink)] flex items-center gap-1 text-[9px] font-mono uppercase border border-[var(--hairline-strong)]"
+                  className="shrink-0 p-1 hover:bg-[var(--paper-3)] rounded text-[var(--ink)] flex items-center gap-1 text-[9px] font-mono uppercase border border-[var(--hairline-strong)]"
+                  aria-label="Zoom heliocentric transfer figure"
                 >
                   <Maximize2 size={10} />
                   Zoom
                 </button>
               </div>
-              <div className="relative group cursor-zoom-in rounded-lg overflow-hidden border border-white/10"
-                   onClick={() => setZoomPlot("/figures/3d_heliocentric_trajectory.png")}>
-                <img 
-                  src="/figures/3d_heliocentric_trajectory.png" 
-                  alt="3D Trajectory" 
-                  className="w-full h-auto object-cover group-hover:scale-[1.02] transition-transform duration-300"
+              <figure className="relative rounded-lg overflow-hidden border border-[var(--hairline)] bg-[var(--paper-3)]">
+                <img
+                  src="/figures/3d_heliocentric_trajectory.png"
+                  alt="Heliocentric transfer from Earth's orbit around the Sun to Mars's orbit"
+                  className="w-full h-auto object-contain"
                 />
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity duration-200">
-                  <span className="text-xs font-mono font-bold text-white bg-slate-950/80 px-3 py-1.5 rounded-lg border border-white/10">Click to expand analysis</span>
-                </div>
+                <figcaption className="orbit-figure__legend" aria-label="Figure legend">
+                  <span><i className="orbit-figure__swatch orbit-figure__swatch--earth" />Earth orbit</span>
+                  <span><i className="orbit-figure__swatch orbit-figure__swatch--mars" />Mars orbit</span>
+                  <span><i className="orbit-figure__swatch orbit-figure__swatch--transfer" />ARES-1 transfer</span>
+                </figcaption>
+              </figure>
+              <div className="grid grid-cols-3 gap-2 text-[9px] font-mono uppercase tracking-wide">
+                <div className="border-l-2 border-cyan-400 pl-2"><span className="block text-[var(--ink-faint)]">Origin</span><strong className="text-[var(--ink)]">Earth orbit</strong></div>
+                <div className="border-l-2 border-cyan-400 pl-2"><span className="block text-[var(--ink-faint)]">Transfer</span><strong className="text-[var(--ink)]">PPO path</strong></div>
+                <div className="border-l-2 border-red-400 pl-2"><span className="block text-[var(--ink-faint)]">Target</span><strong className="text-[var(--ink)]">Mars orbit</strong></div>
               </div>
-              <p className="text-[10.5px] text-slate-400 font-sans leading-relaxed">
-                **Mathematical Summary**: Shows heliocentric departure from Earth orbit and intercept matching Mars position. Under degradation, PPO adjusts steering vectors dynamically to optimize thrust vector angles relative to the orbital plane.
+              <p className="text-[10.5px] text-[var(--ink-dim)] font-sans leading-relaxed">
+                Heliocentric top view: the blue and red ellipses are the reference orbits; the cyan curve is the spacecraft transfer path from Earth toward Mars. Distances and body sizes are intentionally exaggerated for legibility.
               </p>
             </div>
           )}
