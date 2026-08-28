@@ -124,6 +124,7 @@ uniform vec3 uAccentA;
 uniform vec3 uAccentB;
 uniform float uTime;
 uniform float uPulse;
+uniform float uPulseOrigin;
 uniform float uFogNear;
 uniform float uFogFar;
 uniform float uBeamAngle;
@@ -148,7 +149,7 @@ void main(){
 
   /* pulse wave racing around the ring circumference */
   float age = max(uPulse, 0.0);
-  float angDist = abs(mod(vAngle - age * 4.4 + 3.14159265, 6.28318531) - 3.14159265);
+  float angDist = abs(mod(vAngle - (uPulseOrigin + age * 4.4) + 3.14159265, 6.28318531) - 3.14159265);
   float wave = exp(-angDist * angDist * 10.0) * exp(-age * 1.1) * step(0.0, uPulse);
 
   /* stylized lighting: key light + sky top-light + ink edges */
@@ -842,9 +843,15 @@ export default function HeroBlob() {
     };
     const firePulse = () => {
       shockAt = clock;
-      /* fire the wave from a fresh, believable spot each click rather than
-         always the same fixed angle around the ring */
-      pulseOrigin = Math.random() * Math.PI * 2;
+      /* Map the click's screen position to the ring plane so the wave starts
+         where the visitor touched the city, with a random fallback only when
+         the ray misses the plane. */
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(pointerNdc, camera);
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.95);
+      const hit = ray.ray.intersectPlane(plane, new THREE.Vector3());
+      const localHit = hit ? structure.worldToLocal(hit) : null;
+      pulseOrigin = localHit ? Math.atan2(localHit.z, localHit.x) : Math.random() * Math.PI * 2;
       cityUniforms.uPulseOrigin.value = pulseOrigin;
       beaconUniforms.uPulseOrigin.value = pulseOrigin;
       cityUniforms.uPulse.value = 0;
