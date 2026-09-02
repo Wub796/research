@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, type CSSProperties } from "react";
+import "../lib/cesiumInit";
 import { ReactLenis, type LenisRef } from "lenis/react";
 import { 
   Play, 
@@ -18,18 +19,18 @@ import {
   Image,
   Maximize2,
   Compass
-} from "lucide-react";
-import { 
-  Viewer as CesiumViewer, 
-  Cartesian3, 
+} from "lucide-react";import {
+  Viewer as CesiumViewer,
+  Cartesian3,
   Cartesian2,
-  Color, 
+  Color,
   Math as CesiumMath,
   ArcType,
   HeadingPitchRange,
   Matrix4,
-  ScreenSpaceEventType
-} from "cesium";import {
+  ScreenSpaceEventType,
+} from "cesium";
+import {
   CesiumComponentRef, 
   Viewer, 
   Entity, 
