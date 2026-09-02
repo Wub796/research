@@ -8,8 +8,10 @@ const nextConfig = {
     if (isServer) {
       config.externals = [...(config.externals || []), 'cesium', 'resium'];
     } else {
-      // Map `import X from 'cesium'` to `window.Cesium.X` at runtime
-      config.externals = [...(config.externals || []), { cesium: 'Cesium' }];
+      // Cesium is loaded by the page before the client bundle mounts. Keep the
+      // external global explicit so the bundle never evaluates `Cesium` as an
+      // undeclared lexical reference during module initialization.
+      config.externals = [...(config.externals || []), { cesium: 'window.Cesium' }];
     }
 
     config.resolve.fallback = {
