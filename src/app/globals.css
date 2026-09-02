@@ -817,6 +817,42 @@ html.is-invert .text-slate-500{color:#64748b}
 }
 
 /* ============================================================
+   Research landing — a scroll-led editorial layer before the instrument
+   ============================================================ */
+.research-site{background:#f0eee8;color:#111;min-height:100vh;overflow:hidden;font-family:var(--f)}
+.research-progress{position:fixed;z-index:100;top:0;left:0;right:0;height:4px;background:#e84b2c;transform-origin:0 50%}
+.research-hero{min-height:100svh;padding:1.4rem clamp(1.2rem,5vw,5rem) 2rem;display:flex;flex-direction:column;justify-content:space-between;position:relative;border-bottom:1px solid rgba(17,17,17,.18);overflow:hidden}
+.research-topline,.research-hero-foot{display:flex;justify-content:space-between;gap:1rem;font:10px var(--f-vcr);letter-spacing:.22em;text-transform:uppercase;color:#666}
+.research-hero-copy{position:relative;z-index:2;max-width:900px;margin:auto 0;padding:8vh 0 10vh}
+.research-kicker,.research-index{font:11px var(--f-vcr);letter-spacing:.28em;text-transform:uppercase;color:#e84b2c}
+.research-hero h1{font-size:clamp(6rem,22vw,20rem);line-height:.76;letter-spacing:-.09em;margin:.45rem 0 2rem;font-weight:700}
+.research-hero h1 span{font-style:italic;font-weight:400;color:#e84b2c}
+.research-deck{max-width:35rem;font-size:clamp(1.3rem,2.6vw,2.2rem);line-height:1.08;letter-spacing:-.04em}
+.research-launch{border:1px solid #111;background:#111;color:#f0eee8;padding:.9rem 1.2rem;margin-top:2.3rem;font:11px var(--f-vcr);letter-spacing:.16em;cursor:pointer;transition:transform .25s,background .25s;color:#f0eee8}.research-launch:focus-visible{outline:2px solid #e84b2c;outline-offset:4px}
+.research-launch:hover{transform:translateY(-4px);background:#e84b2c;border-color:#e84b2c}
+.research-launch span{font-size:1.2rem;margin-left:1.2rem}
+.research-orbit{position:absolute;width:min(72vw,700px);height:min(72vw,700px);right:-8vw;top:16%;border:1px solid rgba(17,17,17,.28);border-radius:50%;z-index:1}
+.research-orbit::before,.research-orbit::after{content:"";position:absolute;inset:12%;border:1px solid rgba(232,75,44,.6);border-radius:50%;transform:rotate(52deg) scaleX(.42)}
+.research-orbit::after{inset:25%;transform:rotate(-28deg) scaleX(.5);border-color:rgba(17,17,17,.32)}
+.research-orbit span,.research-orbit i,.research-orbit b{position:absolute;border-radius:50%;display:block}
+.research-orbit span{width:24px;height:24px;background:#e84b2c;top:16%;left:18%;box-shadow:0 0 0 14px rgba(232,75,44,.12)}
+.research-orbit i{width:12px;height:12px;background:#111;right:20%;bottom:22%}
+.research-orbit b{width:7px;height:7px;background:#e84b2c;left:50%;top:5%}
+.research-intro,.research-chapter,.research-cta{padding:clamp(5rem,12vw,11rem) clamp(1.2rem,12vw,12rem);border-bottom:1px solid rgba(17,17,17,.16)}
+.research-console-entry{background:#050505;min-height:100vh;position:relative}.research-console-label{height:3.5rem;padding:1rem clamp(1.2rem,5vw,5rem);display:flex;justify-content:space-between;color:#aaa;background:#111;font:10px var(--f-vcr);letter-spacing:.22em;text-transform:uppercase}.research-console-entry>.console-shell{position:relative;top:auto;height:calc(100vh - 3.5rem)}
+.boot[role="alert"] .boot__line{max-width:30rem;text-align:center;line-height:1.6}.boot[role="alert"] .ctl__b{margin-top:.5rem}
+.research-intro{display:grid;grid-template-columns:1fr 2fr;gap:2rem;background:#e84b2c;color:#f0eee8}
+.research-intro .research-index{color:#111}.research-intro h2,.research-cta h2{font-size:clamp(2.5rem,6vw,6rem);line-height:.94;letter-spacing:-.065em;margin:0;grid-column:2}.research-intro>p:last-child{grid-column:2;max-width:34rem;font-size:1.1rem;line-height:1.5}
+.research-intro em,.research-cta em{font-weight:400;color:#111}
+.research-chapter{min-height:75vh;display:grid;grid-template-columns:.7fr 1.4fr 1fr;gap:clamp(2rem,7vw,8rem);align-items:center;position:relative}.research-chapter:nth-of-type(even){background:#e4e1d9}
+.research-chapter h2{font-size:clamp(2.3rem,5vw,5.5rem);line-height:.94;letter-spacing:-.065em;margin:.8rem 0 1.5rem;max-width:45rem}.research-chapter>div:nth-child(2)>p:last-child{max-width:30rem;font-size:1.05rem;line-height:1.55;color:#555}.chapter-number{font:clamp(3rem,10vw,9rem) var(--f-vcr);color:rgba(17,17,17,.2)}
+.chapter-object{width:min(25vw,260px);height:min(25vw,260px);border:1px solid #111;transform:rotate(45deg);position:relative}.chapter-object span{position:absolute;border:1px solid #e84b2c;inset:18%}.chapter-object span:nth-child(2){inset:35%;background:#111;border:0}.chapter-object span:nth-child(3){inset:8%;border-color:rgba(17,17,17,.25)}
+.chapter-2 .chapter-object{border-radius:50%;transform:rotate(-22deg)}.chapter-2 .chapter-object span{border-radius:50%}.chapter-3 .chapter-object{transform:rotate(0);border-color:#e84b2c}.chapter-3 .chapter-object span:nth-child(2){inset:18% 42%;background:#e84b2c}
+.research-cta{background:#111;color:#f0eee8;min-height:80vh;display:flex;flex-direction:column;justify-content:center}.research-cta .research-index{color:#e84b2c}.research-cta h2{margin-top:1rem}.research-cta em{color:#f0eee8}.research-cta .research-launch{align-self:flex-start;background:#e84b2c;border-color:#e84b2c}
+@media(max-width:760px){.research-topline span:last-child{display:none}.research-intro,.research-chapter{display:block}.research-intro h2,.research-intro>p:last-child{margin-top:2rem}.research-chapter{min-height:auto}.chapter-number{margin-bottom:2rem}.chapter-object{margin:4rem auto 1rem;width:180px;height:180px}.research-hero-foot span:first-child{font-size:8px}.research-orbit{right:-35vw;top:25%}.research-console-entry>.console-shell{height:calc(100vh - 3.5rem)}}
+@media(prefers-reduced-motion:reduce){.research-launch:hover{transform:none}.research-orbit{transform:none!important}}
+
+/* ============================================================
    Cesium + misc (kept from previous layout)
    ============================================================ */
 

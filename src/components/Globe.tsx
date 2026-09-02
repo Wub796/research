@@ -59,17 +59,6 @@ const GLOW_URL = (() => {
   return c.toDataURL();
 })();
 
-interface TrajectoryPoint {
-  step: number;
-  sc_pos: Cartesian3;
-  mars_pos: Cartesian3;
-  earth_pos: Cartesian3;
-  thrust: number;
-  isp: number;
-  mass: number;
-  anomaly: boolean;
-}
-
 // Portfolio-style boot sequence: percentage counter + fill bar, waits for the
 // scene, then fades out. Mirrors the "shutter kif." boot (crawl to 96, release).
 function BootScreen({ done }: { done: boolean }) {
@@ -114,6 +103,7 @@ export default function Globe() {
   const [activeRightTab, setActiveRightTab] = useState<"console" | "trajectory" | "isp" | "thrust">("console");
   const [zoomPlot, setZoomPlot] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState<boolean>(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   // Portfolio signatures: invert flips the whole console light/dark via CSS
   // tokens; showBoot keeps the boot screen up briefly after assets arrive.
   const [inverted, setInverted] = useState<boolean>(false);
@@ -458,8 +448,12 @@ export default function Globe() {
 
   // 1. Initial Cesium Ready Check
   useEffect(() => {
+    if (typeof window !== "undefined" && (window as any).Cesium) {
+      setReady(true);
+      return;
+    }
     const interval = setInterval(() => {
-      if (typeof window !== "undefined" && (window as any).Cesium) {
+      if ((window as any).Cesium) {
         setReady(true);
         clearInterval(interval);
       }
@@ -470,11 +464,18 @@ export default function Globe() {
   // 2. Fetch Trajectory JSON Data
   useEffect(() => {
     fetch("/trajectory_data.json")
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`Trajectory request failed: ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
+        if (!data?.steps?.length) throw new Error("Trajectory dataset is empty");
         setTrajectoryData(data);
       })
-      .catch((err) => console.error("Failed to load trajectory data:", err));
+      .catch((err) => {
+        console.error("Failed to load trajectory data:", err);
+        setDataError("Trajectory data could not be loaded. Refresh to try again.");
+      });
   }, []);
 
   // 3. Configure Cesium Environment (Disable Globe & Set Camera View)
@@ -676,6 +677,10 @@ export default function Globe() {
       followRafRef.current = requestAnimationFrame(tick);
     }
   }, [animationStep, isAnimating, trackSC, trackBody, scPositionsAll, earthPositions, marsPositions, ready, trajectoryData]);
+
+  if (dataError) {
+    return <div className="boot" role="alert"><p className="boot__word">ARES<em>1.</em></p><p className="boot__line">{dataError}</p><button className="ctl__b" onClick={() => window.location.reload()}>refresh mission data</button></div>;
+  }
 
   if (!ready || !trajectoryData) {
     return <BootScreen done={false} />;
@@ -1330,7 +1335,7 @@ export default function Globe() {
                 </span>
               </div>
               <span className="text-[9px] font-mono text-[var(--ink-dim)] bg-[var(--paper-3)] px-2 py-0.5 rounded border border-[var(--hairline)]">
-                MAX 11,040h
+                {isAnimating ? "PLAYING" : animationStep === 0 ? "READY · PRESS PLAY" : "PAUSED"}
               </span>
             </div>
           </div>
@@ -1698,6 +1703,7 @@ export default function Globe() {
             <p>• <span className="text-cyan-400 font-bold">Blue Track</span>: Earth Orbital Ellipse</p>
             <p>• <span className="text-red-400 font-bold">Red Track</span>: Mars Orbital Ellipse</p>
             <p>• <span className="text-indigo-400 font-bold">Cyan Line</span>: Spacecraft Trajectory (turns gold during thruster degradation)</p>
+            <p className="mt-2 text-[var(--ink)] font-bold">Start with Play, then scrub to 1497h to inspect the warning window.</p>
           </div>
           <div className="text-[var(--ink-faint)] text-[9px] font-mono mt-2.5 text-right">Click to dismiss guide</div>
         </div>
@@ -1788,6 +1794,7 @@ export default function Globe() {
               }}
               className="p-2 bg-[var(--paper-3)] border border-[var(--hairline)] hover:border-[var(--hairline-strong)] hover:bg-[var(--paper-2)] rounded-lg transition-all text-[var(--ink-dim)] hover:text-[var(--ink)] flex items-center justify-center"
               title="Reset flight timeline"
+              aria-label="Reset flight timeline"
             >
               <RotateCcw size={14} />
             </button>
@@ -1810,6 +1817,7 @@ export default function Globe() {
                   : "bg-[var(--ink)] text-[var(--paper)] shadow-lg hover:opacity-80 border border-transparent"
               }`}
               title={isAnimating ? "Pause simulation" : "Start simulation"}
+              aria-label={isAnimating ? "Pause simulation" : "Start simulation"}
             >
               {isAnimating ? <Pause size={14} /> : <Play size={14} />}
               <span>{isAnimating ? "Pause" : "Play"}</span>
