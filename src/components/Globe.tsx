@@ -90,7 +90,7 @@ function BootScreen({ done }: { done: boolean }) {
   );
 }
 
-export default function Globe() {
+export default function Globe({ embedded = false }: { embedded?: boolean }) {
   const [ready, setReady] = useState(false);
   const [trajectoryData, setTrajectoryData] = useState<any | null>(null);
   const [animationStep, setAnimationStep] = useState<number>(0);
@@ -890,6 +890,12 @@ export default function Globe() {
 
   return (
     <ReactLenis ref={lenisRef} root options={{ lerp: 0.09, smoothWheel: true }}>
+      {/* The standalone portfolio layout (hero, marquee, stats) only renders
+          when Globe is mounted on its own. The research landing mounts it
+          embedded inside its console section, where only the instrument
+          (console-shell) should appear. */}
+      {!embedded && (
+        <>
       {/* HERO — portfolio "shutter kif." style landing, with a liquid
           Three.js wireframe blob behind the wordmark (HeroBlob) */}
       <section className="hero" ref={heroRef}>
@@ -1015,10 +1021,12 @@ export default function Globe() {
         </div>
         <p className="stats__note">
           Autonomous guidance under thruster specific-impulse decay. The Isolation
-          Forest flags the anomaly at hour 1,497 — three hours before the 1,500h
+          Forest flags the anomaly at hour 1,497, three hours before the 1,500h
           failure lock caps Isp for the rest of the cruise.
         </p>
-      </section>
+        </section>
+        </>
+      )}
 
       {/* CONSOLE — pinned below the hero + stats */}
       <div className="console-shell" id="console" ref={consoleShellRef}>

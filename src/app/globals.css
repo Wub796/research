@@ -826,15 +826,17 @@ html.is-invert .text-slate-500{color:#64748b}
 /* overflow-x:clip (not hidden) — hidden turns .research-site into a scroll container and breaks the position:sticky scene + console pinning */
 .research-progress{position:fixed;z-index:100;top:0;left:0;right:0;height:4px;background:#e84b2c;transform-origin:0 50%}
 .research-hero{min-height:100svh;padding:1.4rem clamp(1.2rem,5vw,5rem) 2rem;display:flex;flex-direction:column;justify-content:space-between;position:relative;border-bottom:1px solid rgba(17,17,17,.18);overflow:hidden}
-.research-topline,.research-hero-foot{display:flex;justify-content:space-between;gap:1rem;font:10px var(--f-vcr);letter-spacing:.22em;text-transform:uppercase;color:#666}
+.research-topline{display:flex;justify-content:space-between;gap:1rem;font:10px var(--f-vcr);letter-spacing:.22em;text-transform:uppercase;color:#666}
 .research-hero-copy{position:relative;z-index:2;max-width:900px;margin:auto 0;padding:8vh 0 10vh}
 .research-kicker,.research-index{font:11px var(--f-vcr);letter-spacing:.28em;text-transform:uppercase;color:#e84b2c}
 .research-hero h1{font-size:clamp(6rem,22vw,20rem);line-height:.76;letter-spacing:-.09em;margin:.45rem 0 2rem;font-weight:700}
 .research-hero h1 span{font-style:italic;font-weight:400;color:#e84b2c}
 .research-deck{max-width:35rem;font-size:clamp(1.3rem,2.6vw,2.2rem);line-height:1.08;letter-spacing:-.04em}
-.research-launch{border:1px solid #111;background:#111;color:#f0eee8;padding:.9rem 1.2rem;margin-top:2.3rem;font:11px var(--f-vcr);letter-spacing:.16em;cursor:pointer;transition:transform .25s,background .25s;color:#f0eee8}.research-launch:focus-visible{outline:2px solid #e84b2c;outline-offset:4px}
-.research-launch:hover{transform:translateY(-4px);background:#e84b2c;border-color:#e84b2c}
-.research-launch span{font-size:1.2rem;margin-left:1.2rem}
+.research-launch{display:inline-flex;align-items:center;gap:.9rem;border:1px solid #111;background:#111;color:#f0eee8;padding:.5rem .5rem .5rem 1.25rem;margin-top:2.3rem;font:11px var(--f-vcr);letter-spacing:.16em;cursor:pointer;white-space:nowrap;transition:transform .5s cubic-bezier(.16,1,.3,1),background .35s cubic-bezier(.16,1,.3,1),border-color .35s cubic-bezier(.16,1,.3,1);color:#f0eee8}.research-launch:focus-visible{outline:2px solid #e84b2c;outline-offset:4px}
+.research-launch:active{transform:scale(.97)}
+.research-launch:hover{transform:translateY(-3px);background:#e84b2c;border-color:#e84b2c}
+.research-launch:hover .research-launch-arrow{transform:translate(2px,-2px);background:#f0eee8;border-color:#f0eee8;color:#111}
+.research-launch-arrow{flex:none;width:2.15rem;height:2.15rem;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(240,238,232,.42);font-size:1.05rem;line-height:1;transition:transform .45s cubic-bezier(.16,1,.3,1),background .25s cubic-bezier(.16,1,.3,1),border-color .25s,color .25s}
 .research-orbit{position:absolute;width:min(72vw,700px);height:min(72vw,700px);right:-8vw;top:16%;border:1px solid rgba(17,17,17,.28);border-radius:50%;z-index:1}
 .research-orbit::before,.research-orbit::after{content:"";position:absolute;inset:12%;border:1px solid rgba(232,75,44,.6);border-radius:50%;transform:rotate(52deg) scaleX(.42)}
 .research-orbit::after{inset:25%;transform:rotate(-28deg) scaleX(.5);border-color:rgba(17,17,17,.32)}
@@ -848,12 +850,41 @@ html.is-invert .text-slate-500{color:#64748b}
 .research-console-loading span{font-size:.8rem;letter-spacing:.4em;color:#e0e0e0;animation:boot-pulse 1.6s ease-in-out infinite}
 .research-console-loading i{font-style:normal;font-size:.6rem;letter-spacing:.3em;color:#555}
 @keyframes boot-pulse{0%,100%{opacity:.45}50%{opacity:1}}
+
+/* ---- mission pan: the five decision points as a horizontal filmstrip ----
+   Desktop (gsap .is-panning): section pins, track scrubs sideways with the
+   vertical scroll. Elsewhere it degrades to a native swipe/snap rail. */
+.mission-pan{position:relative;background:#f0eee8;color:#111;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.mission-pan::-webkit-scrollbar{display:none}
+.mission-pan.is-panning{overflow:hidden}
+.mission-pan-track{display:flex;align-items:stretch}
+.mission-pan-frame{flex:0 0 86vw;scroll-snap-align:start;min-height:76dvh;display:flex;flex-direction:column;justify-content:center;padding:clamp(3.5rem,10vh,7rem) clamp(1.4rem,6vw,3.5rem);border-right:1px solid rgba(17,17,17,.14)}
+.mission-pan-cover{flex-basis:96vw}
+.mission-pan-hour{font:11px var(--f-vcr);letter-spacing:.34em;color:rgba(17,17,17,.5)}
+.mission-pan h2{font-size:clamp(2.8rem,8vw,6.2rem);line-height:.95;letter-spacing:-.06em;margin:0 0 1.5rem;font-weight:700;max-width:11ch}
+.mission-pan h3{font-size:clamp(2.4rem,6.5vw,5.2rem);line-height:.95;letter-spacing:-.055em;margin:.9rem 0 0;font-weight:700}
+.mission-pan-note{max-width:26rem;margin-top:1.4rem;font-size:1.02rem;line-height:1.55;color:#555}
+.mission-pan-frame.is-crisis h3{color:#e84b2c}
+.mission-pan-scrub{position:absolute;left:0;bottom:0;width:100%;height:3px;background:#e84b2c;transform:scaleX(0);transform-origin:0 50%;display:none}
+.mission-pan.is-panning .mission-pan-scrub{display:block}
+@media(min-width:769px){
+  .mission-pan:not(.is-panning){overflow-x:auto}
+  .mission-pan-frame{flex:0 0 min(62vw,58rem);min-height:100dvh;padding:0 clamp(2.5rem,5vw,7rem)}
+  .mission-pan-cover{flex-basis:min(100vw,90rem)}
+}
 .boot[role="alert"] .boot__line{max-width:30rem;text-align:center;line-height:1.6}.boot[role="alert"] .ctl__b{margin-top:.5rem}
 .research-intro{display:grid;grid-template-columns:1fr 2fr;gap:2rem;background:#e84b2c;color:#f0eee8}
-.research-intro .research-index{color:#111}.research-intro h2,.research-cta h2{font-size:clamp(2.5rem,6vw,6rem);line-height:.94;letter-spacing:-.065em;margin:0}.research-intro-copy{grid-column:2;display:flex;flex-direction:column;gap:2rem;max-width:34rem}.research-intro-copy p{font-size:1.1rem;line-height:1.5;margin:0}
+.research-intro .research-index{color:#111}.research-intro h2,.research-cta h2{font-size:clamp(2.5rem,6vw,6rem);line-height:1.12;letter-spacing:-.065em;margin:0}.research-intro-copy{grid-column:2;display:flex;flex-direction:column;gap:2rem;max-width:34rem}.research-intro-copy p{font-size:1.1rem;line-height:1.5;margin:0}
 .research-intro em,.research-cta em{font-weight:400;color:#111}
-.research-chapter{min-height:75vh;display:grid;grid-template-columns:.6fr 1.4fr;gap:clamp(2rem,5vw,6rem);align-items:center;position:relative;z-index:1}
+.research-chapter{min-height:75vh;display:grid;grid-template-columns:.6fr 1.4fr;gap:clamp(2rem,5vw,6rem);align-items:center;position:relative;z-index:1;overflow:hidden}
 .research-chapter h2{font-size:clamp(2.3rem,5vw,5.5rem);line-height:.94;letter-spacing:-.065em;margin:.8rem 0 1.5rem;max-width:45rem}.chapter-copy{display:flex;flex-direction:column}.chapter-copy>p:last-child{max-width:30rem;font-size:1.05rem;line-height:1.55;color:#555}.chapter-number{font:clamp(3rem,10vw,9rem) var(--f-vcr);color:rgba(17,17,17,.2);will-change:transform}
+
+/* giant ghost chapter label — deepest parallax layer behind the copy */
+.chapter-ghost{position:absolute;right:clamp(0rem,2vw,3rem);top:50%;transform:translateY(-50%);font-family:var(--f-vcr);font-size:clamp(4.5rem,16vw,15rem);letter-spacing:.02em;line-height:1;white-space:nowrap;color:transparent;-webkit-text-stroke:1px rgba(17,17,17,.16);pointer-events:none;user-select:none}
+
+/* masked word-by-word heading reveal */
+.mask-word{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.08em;margin-bottom:-.08em}
+.mask-word-inner{display:inline-block;will-change:transform}
 
 /* ---- research stage: sticky background scene ----
    the scene pins to the viewport while the chapters scroll over it; three
@@ -861,10 +892,12 @@ html.is-invert .text-slate-500{color:#64748b}
    multiply keeps the ink printed on the paper behind the text. */
 .research-stage{position:relative}
 .research-stage-scene{position:sticky;top:0;height:100vh;overflow:hidden;z-index:0;pointer-events:none;mix-blend-mode:multiply}
-.research-stage-track{position:absolute;top:50%;left:72%;will-change:transform}
-.stage-object{position:absolute;top:0;left:0;width:min(30vw,330px);height:min(30vw,330px);transform:translate(calc(-50% + var(--ox,0px)),calc(-50% + var(--oy,0px)))}
+.research-stage-track{position:absolute;top:50%;left:72%;perspective:1200px;will-change:transform}
+/* objects sit on the track point via negative margins so framer owns the
+   whole transform (tumble is scale + rotateY + x-swoosh per object) */
+.stage-object{position:absolute;left:0;top:0;width:min(30vw,330px);height:min(30vw,330px);margin-left:calc(min(30vw,330px) / -2 + var(--ox,0px));margin-top:calc(min(30vw,330px) / -2 + var(--oy,0px));will-change:transform,opacity}
 .stage-object span,.stage-object i,.stage-object b{position:absolute;display:block}
-.stage-object-1{--oy:-56vh;transform:translate(calc(-50% + var(--ox,0px)),calc(-50% + var(--oy,0px))) rotate(45deg)}
+.stage-object-1{--oy:-56vh}
 .stage-object-1 span{border:1px solid #e84b2c;inset:20%}
 .stage-object-1 span:nth-child(2){inset:38%;background:#111;border:0}
 .stage-object-1 span:nth-child(3){inset:10%;border-color:rgba(17,17,17,.28)}
@@ -876,12 +909,10 @@ html.is-invert .text-slate-500{color:#64748b}
 .stage-object-3 span{inset:14% 42%;background:#e84b2c}
 .stage-object-3 b{inset:0 49%;border-left:1px solid rgba(17,17,17,.35)}
 @keyframes stage-orbit{to{transform:rotate(394deg) scaleX(.52)}}
-.research-stage-idx{position:absolute;left:clamp(1.2rem,5vw,5rem);bottom:2.5rem;display:flex;gap:1rem;font:10px var(--f-vcr);letter-spacing:.2em;color:rgba(17,17,17,.3)}
-.research-stage-idx span{transition:color .3s}
-.research-stage-idx .is-on{color:#e84b2c}
-.research-cta{background:#111;color:#f0eee8;min-height:80vh;display:flex;flex-direction:column;justify-content:center}.research-cta .research-index{color:#e84b2c}.research-cta h2{margin-top:1rem}.research-cta em{color:#f0eee8}.research-cta .research-launch{align-self:flex-start;background:#e84b2c;border-color:#e84b2c}
-@media(max-width:760px){.research-topline span:last-child{display:none}.research-intro,.research-chapter{display:block}.research-intro-copy{margin-top:2rem}.research-chapter{min-height:auto}.chapter-number{margin-bottom:2rem}.research-hero-foot span:first-child{font-size:8px}.research-orbit{right:-35vw;top:25%}.research-stage-track{left:76%}.stage-object{width:min(38vw,220px);height:min(38vw,220px)}.research-console-entry>.console-shell{height:calc(100vh - 3.5rem)}}
-@media(prefers-reduced-motion:reduce){.research-launch:hover{transform:none}.research-orbit{transform:none!important}.research-stage-scene{display:none}.stage-object-2 i{animation:none}}
+
+.research-cta{min-height:80vh;display:flex;flex-direction:column;justify-content:center}.research-cta .research-index{color:#e84b2c}.research-cta h2{margin-top:1rem}.research-cta .research-launch{align-self:flex-start}
+@media(max-width:760px){.research-topline span:last-child{display:none}.research-intro,.research-chapter{display:block}.research-intro-copy{margin-top:2rem}.research-chapter{min-height:auto}.chapter-number{margin-bottom:2rem}.chapter-ghost{display:none}.research-orbit{right:-35vw;top:25%}.research-stage-track{left:76%}.stage-object{width:min(38vw,220px);height:min(38vw,220px);margin-left:calc(min(38vw,220px) / -2 + var(--ox,0px));margin-top:calc(min(38vw,220px) / -2 + var(--oy,0px))}.research-console-entry>.console-shell{height:calc(100vh - 3.5rem)}}
+@media(prefers-reduced-motion:reduce){.research-launch:hover{transform:none}.research-orbit{transform:none!important}.research-stage-scene{display:none}.chapter-ghost{display:none}.stage-object-2 i{animation:none}}
 
 /* ============================================================
    Cesium + misc (kept from previous layout)
