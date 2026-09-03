@@ -1985,14 +1985,16 @@ export default function Globe() {
       )}
 
         </div>
-      </div>
 
-      {/* Scroll progress rail — index + hairline fill (portfolio-style) */}
-      <div className="rail" aria-hidden="true">
-        <div className="rail__track">
-          <div className="rail__fill" style={{ height: `${Math.round(scrollPct * 100)}%` }} />
+        {/* Scroll progress rail — index + hairline fill (portfolio-style).
+            Lives inside the shell so it only ever floats over the console,
+            never the research landing above it. */}
+        <div className="rail" aria-hidden="true">
+          <div className="rail__track">
+            <div className="rail__fill" style={{ height: `${Math.round(scrollPct * 100)}%` }} />
+          </div>
+          <div className="rail__idx">{String(sectionIdx).padStart(2, "0")}<i>/03</i></div>
         </div>
-        <div className="rail__idx">{String(sectionIdx).padStart(2, "0")}<i>/03</i></div>
       </div>
 
       {/* cursor light — soft glow trailing the pointer (difference blend) */}
