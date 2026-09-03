@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { motion, useReducedMotion, useScroll, useSpring, useTransform, type MotionValue } from 'framer-motion';
 import dynamic from 'next/dynamic';
+import BootScreen from '../components/BootScreen';
+import { pub } from '../lib/paths';
 
 const DynamicGlobe = dynamic(() => import('../components/Globe'), { ssr: false });
 const DynamicMissionPan = dynamic(() => import('../components/MissionPan'), { ssr: false });
@@ -110,21 +112,26 @@ function ScrubWord({ progress, start, end, em, children }: { progress: MotionVal
     : <motion.span style={{ opacity }}>{children}{' '}</motion.span>;
 }
 
-/** One object in the stage parade. Each tumbles as it travels: scaling up,
- *  flipping around its Y axis and swooshing across its lane as it passes
- *  the viewport center, then shrinking away as the next object takes over. */
-function StageObject({ index, spring, pinEnd, reduce }: { index: number; spring: MotionValue<number>; pinEnd: number; reduce: boolean }) {
-  const center = (index / 2) * pinEnd;
-  const half = pinEnd / 4;
+/** One object in the stage parade — each chapter is a scene, and the stage
+ *  travel is split into three equal acts (spring thirds). Objects hand off
+ *  hard: the incoming one sweeps in from the side still small and
+ *  out-of-focus, snaps sharp and large exactly at the viewport center, then
+ *  flips away through its Y axis as the next act takes the stage. Blur +
+ *  near-zero opacity at act boundaries make each handoff read as a scene
+ *  change, not a fade. */
+function StageObject({ index, spring, reduce }: { index: number; spring: MotionValue<number>; reduce: boolean }) {
+  const center = index / 3 + 1 / 6; // act centers: 1/6, 3/6, 5/6 of the stage
+  const half = 1 / 6; // each object owns exactly its chapter's third
   const [p0, p1] = [center - half, center + half];
-  const scale = useTransform(spring, [p0, center, p1], reduce ? [1, 1, 1] : [0.5, 1.08, 0.5]);
-  const rotateY = useTransform(spring, [p0, center, p1], reduce ? [0, 0, 0] : [-60, 0, 60]);
-  const x = useTransform(spring, [p0, center, p1], reduce ? [0, 0, 0] : [48, 0, -48]);
-  const opacity = useTransform(spring, [p0, center, p1], reduce ? [1, 1, 1] : [0.25, 1, 0.25]);
+  const scale = useTransform(spring, [p0, center, p1], reduce ? [1, 1, 1] : [0.3, 1.22, 0.3]);
+  const rotateY = useTransform(spring, [p0, center, p1], reduce ? [0, 0, 0] : [-95, 0, 95]);
+  const x = useTransform(spring, [p0, center, p1], reduce ? [0, 0, 0] : [120, 0, -120]);
+  const opacity = useTransform(spring, [p0, center, p1], reduce ? [1, 1, 1] : [0.1, 1, 0.1]);
+  const depth = useTransform(spring, [p0, center, p1], reduce ? ['blur(0px)', 'blur(0px)', 'blur(0px)'] : ['blur(5px)', 'blur(0px)', 'blur(5px)']);
   return (
     <motion.div
       className={`stage-object stage-object-${index + 1}`}
-      style={{ scale, rotateY, x, opacity, rotate: index === 0 ? 45 : 0 }}
+      style={{ scale, rotateY, x, opacity, filter: depth, rotate: index === 0 ? 45 : 0 }}
     >
       {index === 0 && <><span /><span /><span /></>}
       {index === 1 && <><span /><span /><i /></>}
@@ -143,6 +150,7 @@ function ResearchChapter({ number, label, title, body }: (typeof researchChapter
   const copyY = useTransform(scrollYProgress, [0, 1], reduce ? [0, 0] : [120, -120]);
   const copySkew = useTransform(scrollYProgress, [0, 1], reduce ? [0, 0] : [-2.5, 2.5]);
   const ghostY = useTransform(scrollYProgress, [0, 1], reduce ? [0, 0] : [240, -240]);
+  const ghostRotate = useTransform(scrollYProgress, [0, 1], reduce ? [0, 0] : [-2.6, 2.6]);
   const ghostOpacity = useTransform(scrollYProgress, [0, 0.1, 0.9, 1], reduce ? [0, 0, 0, 0] : [0, 0.7, 0.7, 0]);
 
   return (
@@ -154,7 +162,12 @@ function ResearchChapter({ number, label, title, body }: (typeof researchChapter
       viewport={{ once: true, amount: 0.3 }}
       variants={{ hidden: { opacity: 0, y: 48 }, visible: { opacity: 1, y: 0, transition: { duration: 0.7, ease: [0.16, 1, 0.3, 1] } } }}
     >
-      <motion.span className="chapter-ghost" aria-hidden="true" style={{ y: ghostY, opacity: ghostOpacity }}>{label}</motion.span>
+      {/* outer span holds the CSS translateY(-50%) centering; the inner motion
+          span owns the scroll-scrubbed drift + tilt (framer would otherwise
+          overwrite the CSS transform) */}
+      <span className="chapter-ghost" aria-hidden="true">
+        <motion.span style={{ y: ghostY, rotate: ghostRotate, opacity: ghostOpacity }}>{label}</motion.span>
+      </span>
       <motion.div className="chapter-number" style={{ y: numY }}>{number}</motion.div>
       <motion.div className="chapter-copy" style={{ y: copyY, skewY: copySkew }}>
         {reduce ? <h2>{title}</h2> : <MaskedWords text={title} />}
@@ -164,7 +177,7 @@ function ResearchChapter({ number, label, title, body }: (typeof researchChapter
   );
 }
 
-function ResearchLanding({ cesiumReady }: { cesiumReady: boolean }) {
+function ResearchLanding({ cesiumReady, booted, onInstrumentReady }: { cesiumReady: boolean; booted: boolean; onInstrumentReady: () => void }) {
   const pageRef = useRef<HTMLElement>(null);
   const consoleRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -178,25 +191,21 @@ function ResearchLanding({ cesiumReady }: { cesiumReady: boolean }) {
   const titleOpacity = useTransform(progress, [0, 0.28], [1, 0]);
 
   // Background scene: three objects are stacked inside the sticky viewport
-  // layer and translated upward as the chapters scroll. Each object takes a
-  // turn at center — entering from below, holding, then exiting above.
+  // layer and translated upward across the WHOLE stage travel (spring 0→1),
+  // so chapter i always rides object i — no act ever finishes before its
+  // chapter has passed. Each object takes a turn at center — a scene change
+  // per act — while the whole track dollies sideways and a slower ring layer
+  // behind gives the space depth. NOTE: trackX/deepY reduce to zero under
+  // prefers-reduced-motion.
   const { scrollYProgress: stageProgress } = useScroll({ target: stageRef, offset: ['start start', 'end end'] });
   const stageSpring = useSpring(stageProgress, { stiffness: 90, damping: 24 });
-  // The scene is only pinned while there is >= 100vh of stage left below the
-  // viewport; progress beyond that point just carries the whole scene upward.
-  const [pinEnd, setPinEnd] = useState(1);
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const measure = () => {
-      const ratio = (el.offsetHeight - window.innerHeight) / el.offsetHeight;
-      setPinEnd(Math.min(1, Math.max(0.08, ratio)));
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
-  const trackY = useTransform(stageSpring, [0, pinEnd], reduce ? ['56vh', '56vh'] : ['56vh', '-56vh']);
+  const trackY = useTransform(stageSpring, [0, 1], reduce ? ['56vh', '56vh'] : ['56vh', '-56vh']);
+  // Lateral dolly: the camera pans across the scene as the chapters pass, so
+  // handing from one act to the next moves the world, not just the object.
+  const trackX = useTransform(stageSpring, [0, 1], reduce ? ['0vw', '0vw'] : ['5vw', '-5vw']);
+  // Deepest parallax layer: a faint printed ring drifting at roughly half the
+  // track's speed, so the objects read as floating above a background plane.
+  const deepY = useTransform(stageSpring, [0, 1], reduce ? ['30vh', '30vh'] : ['34vh', '-34vh']);
   const orbScale = useTransform(progress, [0, 1], [1, 1.18]);
 
 
@@ -207,18 +216,17 @@ function ResearchLanding({ cesiumReady }: { cesiumReady: boolean }) {
   return (
     <main className="research-site" ref={pageRef}>
       <motion.div className="research-progress" style={{ scaleX: progress }} />
-      <section className="research-hero">
-        <motion.div
-          className="research-topline"
-          initial={reduce ? false : { opacity: 0, y: -14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <span>ORBITAL WATCH / FIELD NOTE 001</span><span>HOUSTON · EARTH → MARS</span>
+      <section className="research-hero">          <motion.div
+            className="research-topline"
+            initial={reduce ? false : { opacity: 0, y: -14 }}
+            animate={booted ? { opacity: 1, y: 0 } : { opacity: 0, y: -14 }}
+            transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+          >
+          <span>ARES-1 / FIELD NOTE 001</span><span>HOUSTON · EARTH → MARS</span>
         </motion.div>
         <motion.div
           initial={reduce ? false : { opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
+          animate={booted ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.9 }}
           transition={{ duration: 1.5, ease: [0.16, 1, 0.3, 1], delay: 0.12 }}
         >
           <motion.div className="research-orbit" style={{ y: orbY, rotate: orbRotate, scale: orbScale }} aria-hidden="true"><span /><i /><b /></motion.div>
@@ -227,25 +235,25 @@ function ResearchLanding({ cesiumReady }: { cesiumReady: boolean }) {
           <motion.p
             className="research-kicker"
             initial={reduce ? false : { opacity: 0, y: 26, filter: 'blur(10px)' }}
-            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            animate={booted ? { opacity: 1, y: 0, filter: 'blur(0px)' } : { opacity: 0, y: 26, filter: 'blur(10px)' }}
             transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1], delay: 0.18 }}
           >A research instrument for a mission under stress</motion.p>
           <motion.h1
             initial={reduce ? false : { opacity: 0, y: 34, filter: 'blur(12px)' }}
-            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            animate={booted ? { opacity: 1, y: 0, filter: 'blur(0px)' } : { opacity: 0, y: 34, filter: 'blur(12px)' }}
             transition={{ duration: 1, ease: [0.16, 1, 0.3, 1], delay: 0.28 }}
           >ARES<span>1.</span></motion.h1>
           <motion.p
             className="research-deck"
             initial={reduce ? false : { opacity: 0, y: 30, filter: 'blur(8px)' }}
-            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            animate={booted ? { opacity: 1, y: 0, filter: 'blur(0px)' } : { opacity: 0, y: 30, filter: 'blur(8px)' }}
             transition={{ duration: 0.95, ease: [0.16, 1, 0.3, 1], delay: 0.4 }}
           >What happens when autonomous guidance has to keep learning after propulsion starts to fail?</motion.p>
           <motion.button
             className="research-launch"
             onClick={jumpToConsole}
             initial={reduce ? false : { opacity: 0, y: 22 }}
-            animate={{ opacity: 1, y: 0 }}
+            animate={booted ? { opacity: 1, y: 0 } : { opacity: 0, y: 22 }}
             transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: 0.52 }}
           >ENTER ARES-1 <span className="research-launch-arrow">↘</span></motion.button>
         </motion.div>
@@ -261,10 +269,11 @@ function ResearchLanding({ cesiumReady }: { cesiumReady: boolean }) {
 
       <div className="research-stage" ref={stageRef}>
         <div className="research-stage-scene" aria-hidden="true">
-          <motion.div className="research-stage-track" style={{ y: trackY }}>
-            <StageObject index={0} spring={stageSpring} pinEnd={pinEnd} reduce={reduce} />
-            <StageObject index={1} spring={stageSpring} pinEnd={pinEnd} reduce={reduce} />
-            <StageObject index={2} spring={stageSpring} pinEnd={pinEnd} reduce={reduce} />
+          <motion.div className="research-stage-deep" style={{ y: deepY }} aria-hidden="true"><span /><span /></motion.div>
+          <motion.div className="research-stage-track" style={{ y: trackY, x: trackX }}>
+            <StageObject index={0} spring={stageSpring} reduce={reduce} />
+            <StageObject index={1} spring={stageSpring} reduce={reduce} />
+            <StageObject index={2} spring={stageSpring} reduce={reduce} />
           </motion.div>
         </div>
         <div className="research-stage-body">
@@ -285,7 +294,7 @@ function ResearchLanding({ cesiumReady }: { cesiumReady: boolean }) {
       <section ref={consoleRef} className="research-console-entry" aria-label="Live ARES-1 console">
         <div className="research-console-label"><span>04</span><span>LIVE INSTRUMENT</span></div>
         {cesiumReady ? (
-          <DynamicGlobe embedded />
+          <DynamicGlobe embedded onReady={onInstrumentReady} />
         ) : (
           <div className="research-console-loading" aria-live="polite">
             <span>BOOTING INSTRUMENT</span>
@@ -299,11 +308,16 @@ function ResearchLanding({ cesiumReady }: { cesiumReady: boolean }) {
 
 export default function Home() {
   const [cesiumReady, setCesiumReady] = useState(false);
+  // Boot gate: the full-screen boot overlay is the first thing rendered and
+  // lifts only once the instrument reports ready — the landing never flashes
+  // in front of the loading screen.
+  const [booted, setBooted] = useState(false);
+  const onInstrumentReady = useCallback(() => setBooted(true), []);
 
   useEffect(() => {
     const stylesheet = document.createElement('link');
     stylesheet.rel = 'stylesheet';
-    stylesheet.href = '/cesium/Widgets/widgets.css';
+    stylesheet.href = pub('/cesium/Widgets/widgets.css');
     document.head.appendChild(stylesheet);
 
     const existing = document.querySelector('script[data-cesium]');
@@ -314,7 +328,7 @@ export default function Home() {
 
     const script = document.createElement('script');
     script.dataset.cesium = 'true';
-    script.src = '/cesium/Cesium.js';
+    script.src = pub('/cesium/Cesium.js');
     script.onload = () => {
       (window as any).Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlMzI0NzViMS04ZjZjLTQxNmQtOTJkNC0yZTViZjkwYzYxOWMiLCJpZCI6NDI0NDcxLCJpYXQiOjE3NzczMjg3MTl9.kCCHm-YA8SWZzz1ulCKkP0uDCUTISmH2MHHkXTg76z4';
       // The Globe chunk imports from "cesium", which is externalized to the
@@ -322,9 +336,23 @@ export default function Home() {
       // so the chunk evaluates after the script — never before it.
       setCesiumReady(true);
     };
+    // Never trap the visitor on a stalled boot: a failed script or hung fetch
+    // lifts the overlay and lets the console's own loading fallback show.
+    script.onerror = () => setBooted(true);
     document.head.appendChild(script);
-    return () => stylesheet.remove();
+    const stall = setTimeout(() => setBooted(true), 15000);
+    return () => {
+      stylesheet.remove();
+      clearTimeout(stall);
+    };
   }, []);
 
-  return <ResearchLanding cesiumReady={cesiumReady} />;
+  return (
+    <>
+      <ResearchLanding cesiumReady={cesiumReady} booted={booted} onInstrumentReady={onInstrumentReady} />
+      {/* First thing rendered, last thing to go: covers the landing until the
+          instrument is ready, then fades to reveal the hero load-in. */}
+      <BootScreen done={booted} overlay />
+    </>
+  );
 }

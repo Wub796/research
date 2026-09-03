@@ -1,4 +1,11 @@
+// GitHub Pages serves this repo at https://Wub796.github.io/research/, so the
+// app must be a static export and every asset URL must lead with /research.
+// Keep this in sync with BASE_PATH in src/lib/paths.ts.
+const basePath = '/research';
+
 const nextConfig = {
+  output: 'export',
+  basePath,
   turbopack: {},
   eslint: {
     ignoreDuringBuilds: true, // ← add this

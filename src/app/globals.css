@@ -10,10 +10,12 @@
    every surface and every cut-out flips together under .is-invert.
    ============================================================ */
 
-@font-face{font-family:'Helv';src:url('/fonts/Helvetica.woff') format('woff'),url('/fonts/Helvetica.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap}
-@font-face{font-family:'Helv';src:url('/fonts/Helvetica-Oblique.woff') format('woff'),url('/fonts/Helvetica-Oblique.ttf') format('truetype');font-weight:400;font-style:italic;font-display:swap}
-@font-face{font-family:'Helv';src:url('/fonts/Helvetica-Bold.woff') format('woff'),url('/fonts/Helvetica-Bold.ttf') format('truetype');font-weight:700;font-style:normal;font-display:swap}
-@font-face{font-family:'VCR';src:url('/fonts/VCR.woff') format('woff'),url('/fonts/VCR.ttf') format('truetype');font-weight:400;font-display:swap}
+/* Self-hosted brand faces — absolute urls are NOT rewritten for basePath, so
+   they lead with /research to match next.config.mjs + src/lib/paths.ts. */
+@font-face{font-family:'Helv';src:url('/research/fonts/Helvetica.woff') format('woff'),url('/research/fonts/Helvetica.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:'Helv';src:url('/research/fonts/Helvetica-Oblique.woff') format('woff'),url('/research/fonts/Helvetica-Oblique.ttf') format('truetype');font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:'Helv';src:url('/research/fonts/Helvetica-Bold.woff') format('woff'),url('/research/fonts/Helvetica-Bold.ttf') format('truetype');font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:'VCR';src:url('/research/fonts/VCR.woff') format('woff'),url('/research/fonts/VCR.ttf') format('truetype');font-weight:400;font-display:swap}
 
 :root{
   --light:#ffffff;
@@ -122,6 +124,8 @@ html.is-invert .text-slate-500{color:#64748b}
   transition:opacity .5s cubic-bezier(.16,1,.3,1),visibility .5s;
 }
 .boot.is-done{opacity:0;visibility:hidden;pointer-events:none}
+/* page-level gate — sits above the landing chrome (progress bar at z-100) */
+.boot--overlay{z-index:150}
 .boot__word{
   font-family:var(--f);
   font-weight:700;
@@ -879,8 +883,11 @@ html.is-invert .text-slate-500{color:#64748b}
 .research-chapter{min-height:75vh;display:grid;grid-template-columns:.6fr 1.4fr;gap:clamp(2rem,5vw,6rem);align-items:center;position:relative;z-index:1;overflow:hidden}
 .research-chapter h2{font-size:clamp(2.3rem,5vw,5.5rem);line-height:.94;letter-spacing:-.065em;margin:.8rem 0 1.5rem;max-width:45rem}.chapter-copy{display:flex;flex-direction:column}.chapter-copy>p:last-child{max-width:30rem;font-size:1.05rem;line-height:1.55;color:#555}.chapter-number{font:clamp(3rem,10vw,9rem) var(--f-vcr);color:rgba(17,17,17,.2);will-change:transform}
 
-/* giant ghost chapter label — deepest parallax layer behind the copy */
+/* giant ghost chapter label — deepest parallax layer behind the copy.
+   The outer span keeps the translateY(-50%) centering (framer owns the
+   inner span's transform), so the inner motion span can drift + tilt. */
 .chapter-ghost{position:absolute;right:clamp(0rem,2vw,3rem);top:50%;transform:translateY(-50%);font-family:var(--f-vcr);font-size:clamp(4.5rem,16vw,15rem);letter-spacing:.02em;line-height:1;white-space:nowrap;color:transparent;-webkit-text-stroke:1px rgba(17,17,17,.16);pointer-events:none;user-select:none}
+.chapter-ghost>span{display:inline-block}
 
 /* masked word-by-word heading reveal */
 .mask-word{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.08em;margin-bottom:-.08em}
@@ -892,12 +899,18 @@ html.is-invert .text-slate-500{color:#64748b}
    multiply keeps the ink printed on the paper behind the text. */
 .research-stage{position:relative}
 .research-stage-scene{position:sticky;top:0;height:100vh;overflow:hidden;z-index:0;pointer-events:none;mix-blend-mode:multiply}
+/* deepest parallax plane — concentric printed rings behind the objects,
+   drifting at half the track's speed so the scene has measurable depth */
+.research-stage-deep{position:absolute;inset:0;will-change:transform}
+.research-stage-deep span{position:absolute;left:72%;top:52%;transform:translate(-50%,-50%);border:1px solid rgba(17,17,17,.12);border-radius:50%}
+.research-stage-deep span:first-child{width:min(120vw,760px);height:min(120vw,760px)}
+.research-stage-deep span:last-child{width:min(82vw,520px);height:min(82vw,520px);border-color:rgba(232,75,44,.24);transform:translate(-50%,-50%) rotate(-14deg) scaleX(.6)}
 .research-stage-track{position:absolute;top:50%;left:72%;perspective:1200px;will-change:transform}
 /* objects sit on the track point via negative margins so framer owns the
    whole transform (tumble is scale + rotateY + x-swoosh per object) */
 .stage-object{position:absolute;left:0;top:0;width:min(30vw,330px);height:min(30vw,330px);margin-left:calc(min(30vw,330px) / -2 + var(--ox,0px));margin-top:calc(min(30vw,330px) / -2 + var(--oy,0px));will-change:transform,opacity}
 .stage-object span,.stage-object i,.stage-object b{position:absolute;display:block}
-.stage-object-1{--oy:-56vh}
+.stage-object-1{--oy:-37vh}
 .stage-object-1 span{border:1px solid #e84b2c;inset:20%}
 .stage-object-1 span:nth-child(2){inset:38%;background:#111;border:0}
 .stage-object-1 span:nth-child(3){inset:10%;border-color:rgba(17,17,17,.28)}
@@ -905,14 +918,52 @@ html.is-invert .text-slate-500{color:#64748b}
 .stage-object-2 span{border:1px solid rgba(17,17,17,.3);inset:16%;border-radius:50%}
 .stage-object-2 span:nth-child(2){inset:42%;background:#111;border:0}
 .stage-object-2 i{inset:14%;border:1px solid rgba(232,75,44,.75);border-radius:50%;transform:rotate(34deg) scaleX(.52);animation:stage-orbit 16s linear infinite}
-.stage-object-3{--oy:56vh;--ox:-5vw;border:1px solid #e84b2c}
+.stage-object-3{--oy:37vh;--ox:-5vw;border:1px solid #e84b2c}
 .stage-object-3 span{inset:14% 42%;background:#e84b2c}
 .stage-object-3 b{inset:0 49%;border-left:1px solid rgba(17,17,17,.35)}
 @keyframes stage-orbit{to{transform:rotate(394deg) scaleX(.52)}}
 
 .research-cta{min-height:80vh;display:flex;flex-direction:column;justify-content:center}.research-cta .research-index{color:#e84b2c}.research-cta h2{margin-top:1rem}.research-cta .research-launch{align-self:flex-start}
-@media(max-width:760px){.research-topline span:last-child{display:none}.research-intro,.research-chapter{display:block}.research-intro-copy{margin-top:2rem}.research-chapter{min-height:auto}.chapter-number{margin-bottom:2rem}.chapter-ghost{display:none}.research-orbit{right:-35vw;top:25%}.research-stage-track{left:76%}.stage-object{width:min(38vw,220px);height:min(38vw,220px);margin-left:calc(min(38vw,220px) / -2 + var(--ox,0px));margin-top:calc(min(38vw,220px) / -2 + var(--oy,0px))}.research-console-entry>.console-shell{height:calc(100vh - 3.5rem)}}
+@media(max-width:760px){.research-topline span:last-child{display:none}.research-intro,.research-chapter{display:block}.research-intro-copy{margin-top:2rem}.research-chapter{min-height:auto}.chapter-number{margin-bottom:2rem}.chapter-ghost{display:none}.research-orbit{right:-35vw;top:25%}.research-stage-track{left:76%}.research-stage-deep span{left:76%}.research-stage-deep span:first-child{width:min(140vw,560px);height:min(140vw,560px)}.stage-object{width:min(38vw,220px);height:min(38vw,220px);margin-left:calc(min(38vw,220px) / -2 + var(--ox,0px));margin-top:calc(min(38vw,220px) / -2 + var(--oy,0px))}.research-console-entry>.console-shell{height:calc(100vh - 3.5rem)}}
 @media(prefers-reduced-motion:reduce){.research-launch:hover{transform:none}.research-orbit{transform:none!important}.research-stage-scene{display:none}.chapter-ghost{display:none}.stage-object-2 i{animation:none}}
+
+/* ============================================================
+   Custom reticle cursor — mission-control crosshair (open center, no
+   dot, no ring). Hides the native pointer only on fine-pointer devices
+   without reduced motion; everywhere else it never renders.
+   ============================================================ */
+.reticle{display:none}
+html.has-reticle .reticle{display:block}
+.reticle{position:fixed;top:0;left:0;z-index:10000;pointer-events:none;color:#111;will-change:transform}
+.reticle svg{display:block;margin:-15px 0 0 -15px;overflow:visible}
+.reticle path{fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
+.reticle path:last-child{stroke-width:1;opacity:.55}
+.reticle.is-hover{color:#e84b2c}
+.reticle.is-press{color:#e84b2c}
+.reticle.is-dark{color:#f0eee8}
+.reticle.is-dark.is-hover{color:#e84b2c}
+@media (pointer:fine){
+  html.has-reticle,html.has-reticle *{cursor:none !important}
+}
+
+/* ============================================================
+   Hover choreography — only on devices that actually hover
+   ============================================================ */
+@media (hover:hover) and (pointer:fine){
+  .chapter-ghost{transition:-webkit-text-stroke-color .6s cubic-bezier(.16,1,.3,1)}
+  .research-chapter:hover .chapter-ghost{-webkit-text-stroke-color:rgba(232,75,44,.6)}
+  .chapter-number{transition:color .6s cubic-bezier(.16,1,.3,1)}
+  .research-chapter:hover .chapter-number{color:rgba(232,75,44,.65)}
+  /* editorial underline sweep across the masked title on hover */
+  .research-chapter h2{position:relative}
+  .research-chapter h2::after{content:"";position:absolute;left:0;bottom:-.02em;height:2px;width:100%;background:#e84b2c;transform:scaleX(0);transform-origin:100% 50%;transition:transform .7s cubic-bezier(.16,1,.3,1)}
+  .research-chapter h2:hover::after{transform:scaleX(1);transform-origin:0 50%}
+  /* mission pan frames wake up on hover */
+  .mission-pan-frame h2,.mission-pan-frame h3,.mission-pan-hour,.mission-pan-note{transition:transform .55s cubic-bezier(.16,1,.3,1),color .4s cubic-bezier(.16,1,.3,1)}
+  .mission-pan-frame:hover h3{transform:translateX(.3em)}
+  .mission-pan-frame:hover .mission-pan-hour{color:#e84b2c}
+  .mission-pan-frame:hover .mission-pan-note{color:#111}
+}
 
 /* ============================================================
    Cesium + misc (kept from previous layout)

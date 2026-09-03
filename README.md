@@ -1,53 +1,82 @@
-# Orbital Watch — Real-Time Satellite & Debris Tracker
+# ARES-1 — Heliocentric Trajectory Visualizer / PPO Guidance Console
 
-**Congressional App Challenge Submission**
-**District:** TX-101912
-**Developer:** Benjamin Wu
+A scroll-led research visualization of an autonomous guidance experiment: a PPO
+(reinforcement learning) controller pilots a low-thrust spacecraft from Earth
+to Mars while its engine quietly degrades in flight. An Isolation Forest
+watches telemetry for the first sign of the unseen failure — and the site's
+live instrument lets you scrub through every decision the controller makes
+after that point.
 
-## The Problem
+Live at **https://Wub796.github.io/research/**
 
-There are **6,000+ active satellites** and **27,000+ pieces of tracked debris** orbiting Earth right now. 
-Every day, this number grows — and so does the risk of catastrophic collision. The **Kessler Syndrome** 
-describes a chain-reaction scenario where one collision triggers a cascade, permanently destroying entire 
-orbital shells that GPS, weather forecasting, and national security depend on.
+## The mission, in numbers
 
-**Houston has more at stake than almost any other city in America:**
-- NASA Johnson Space Center monitors every crewed mission from here
-- The energy sector relies on satellite communications for offshore operations
-- Emergency weather systems protecting the Gulf Coast run through orbital infrastructure
+- **11,040 hours** — duration of the heliocentric transfer
+- **1,000 h** — thruster specific-impulse decay begins
+- **1,497 h** — the Isolation Forest flags an anomalous engine signature
+- **1,500 h** — hardware failure locks specific impulse at **1,514.7 s**
+- **1,514.7 s** — the degraded Isp the PPO policy must keep flying with
 
-## The Solution
+## The experience
 
-Orbital Watch lets anyone — student, voter, or lawmaker — see the crisis in real time.
+The page is one long scroll scene: the editorial chapters ride over a
+parallax object parade (each act hands off to the next as you scroll), the
+mission's five decision points play out in a pinned horizontal pan, and the
+whole thing hands into a black CesiumJS console — the instrument where you
+scrub the transfer, watch the anomaly fire, and see the model change its mind.
 
-- 🌍 **Live 3D globe** powered by CesiumJS with real orbital propagation
-- 📡 **6,000+ satellites** tracked using live TLE data from CelesTrak
-- 🗑️ **Space debris** visualized separately from active payloads
-- 📍 **ZIP code flyover** — enter any US ZIP to see what's overhead right now
-- 📚 **Educational drawer** explaining Kessler Syndrome and what Congress can do
+**In the console:** play/pause the 11,040-hour timeline, follow the spacecraft
+or lock onto the Sun, Earth, or Mars, and switch the right-hand panel between
+the live guidance log and the science plots (trajectory, Isp decay, thrust vs.
+propellant) — each plot opens full-screen with a zoom overlay. A boot sequence
+covers the page until the instrument is ready.
 
-## Live Demo
+## Repository layout
 
-🔗 [https://houston-climate-dashboard.vercel.app/](https://houston-climate-dashboard.vercel.app/)
-
-## Tech Stack
-
-- **Next.js 15** + TypeScript
-- **CesiumJS** + Resium for 3D globe rendering
-- **satellite.js** for real-time orbital propagation (SGP4 model)
-- **Tailwind CSS** + Framer Motion for UI
-- **Vercel** for deployment
-
-## Running Locally
-
-```bash
-npm install
-npm run dev
+```
+public/                 cesium/ (copied by postinstall), figures/, fonts/, trajectory_data.json
+scripts/
+  copy-cesium-assets.cjs  postinstall hook — copies Cesium into public/cesium
+  visualize.py            offline analysis + figure generation (matplotlib)
+src/
+  app/page.tsx            the scroll-led landing (boot gate, hero, chapters, CTA)
+  app/globals.css         design tokens + all landing/console styles
+  components/
+    BootScreen.tsx        full-screen boot sequence
+    Globe.tsx             the CesiumJS console (the instrument)
+    MissionPan.tsx        GSAP pinned horizontal scrub of the five decision points
+    HeroBlob.tsx          legacy standalone Three.js blob (not used on the landing)
+  lib/
+    cesiumInit.ts         sets window.CESIUM_BASE_URL before Cesium boots
+    paths.ts              GitHub Pages base-path helper (mirrors next.config.mjs)
+public/trajectory_data.json   precomputed mission telemetry for the console
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+## Tech stack
 
-## Data Sources
+- **Next.js 15** — static export (`output: 'export'`) for GitHub Pages
+- **CesiumJS + Resium** — the 3D heliocentric console
+- **Framer Motion + GSAP ScrollTrigger** — scroll scenes, scrubbed text, the pinned pan
+- **Tailwind CSS + Lenis** — styling and smooth scrolling
 
-- [CelesTrak](https://celestrak.org) — live Two-Line Element (TLE) sets
-- [Zippopotam.us](https://zippopotam.us) — ZIP code geocoding
+## Local development
+
+```bash
+npm ci          # installs and copies Cesium assets into public/cesium
+npm run dev     # dev server — served under the /research base path
+npm run build   # static export to out/
+```
+
+`basePath` is `/research` to match the GitHub Pages subpath; mirror it wherever
+runtime URLs are built (`src/lib/paths.ts`).
+
+## Deploying to GitHub Pages
+
+Pushes to `main` trigger `.github/workflows/deploy.yml` (static export →
+`actions/upload-pages-artifact` → `actions/deploy-pages`). One-time setup:
+
+1. Repo **Settings → Pages → Source**: pick **GitHub Actions**.
+2. Push (or re-run the workflow) — the site appears at the repo's Pages URL.
+3. If the base path ever changes (repo rename or custom domain at the root),
+   update `basePath` in `next.config.mjs` and `BASE_PATH` in `src/lib/paths.ts`
+   together — everything else derives from them.

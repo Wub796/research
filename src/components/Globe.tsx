@@ -41,6 +41,8 @@ import {
   BillboardGraphics
 } from "resium";
 import HeroBlob from "./HeroBlob";
+import BootScreen from "./BootScreen";
+import { pub } from "../lib/paths";
 
 // Soft radial glow sprite (canvas-generated) used for the Sun corona and the
 // Earth/Mars halos. Additive blend in Cesium so it reads as light, not paint.
@@ -60,37 +62,7 @@ const GLOW_URL = (() => {
   return c.toDataURL();
 })();
 
-// Portfolio-style boot sequence: percentage counter + fill bar, waits for the
-// scene, then fades out. Mirrors the "shutter kif." boot (crawl to 96, release).
-function BootScreen({ done }: { done: boolean }) {
-  const [pct, setPct] = useState(0);
-
-  useEffect(() => {
-    if (done) {
-      setPct(100);
-      return;
-    }
-    const iv = setInterval(() => {
-      setPct((p) => Math.min(96, p + Math.max(1, Math.round((96 - p) * 0.16))));
-    }, 70);
-    return () => clearInterval(iv);
-  }, [done]);
-
-  return (
-    <div className={`boot ${done ? "is-done" : ""}`} role="status" aria-label="Loading">
-      <p className="boot__word">
-        ARES<em>1.</em>
-      </p>
-      <div className="boot__bar">
-        <span style={{ width: `${pct}%` }} />
-      </div>
-      <div className="boot__pct">{String(Math.round(pct)).padStart(3, "0")}</div>
-      <div className="boot__line">PPO guidance · trajectory scheduler</div>
-    </div>
-  );
-}
-
-export default function Globe({ embedded = false }: { embedded?: boolean }) {
+export default function Globe({ embedded = false, onReady }: { embedded?: boolean; onReady?: () => void }) {
   const [ready, setReady] = useState(false);
   const [trajectoryData, setTrajectoryData] = useState<any | null>(null);
   const [animationStep, setAnimationStep] = useState<number>(0);
@@ -152,11 +124,16 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
   }, [inverted]);
 
   // Boot: hold the boot screen a beat after the scene is ready, then fade out.
+  // onReady lifts the page-level boot overlay at the same instant, so the
+  // visitor sees exactly one boot screen and one reveal.
   useEffect(() => {
     if (!ready || !trajectoryData) return;
-    const t = setTimeout(() => setShowBoot(false), 1100);
+    const t = setTimeout(() => {
+      setShowBoot(false);
+      onReady?.();
+    }, 1100);
     return () => clearTimeout(t);
-  }, [ready, trajectoryData]);
+  }, [ready, trajectoryData, onReady]);
 
   // Sound: portfolio pattern — the track rolls muted from the first frame so
   // it is buffered; toggling only unmutes (which cannot fail on a gesture).
@@ -464,7 +441,7 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
 
   // 2. Fetch Trajectory JSON Data
   useEffect(() => {
-    fetch("/trajectory_data.json")
+    fetch(pub("/trajectory_data.json"))
       .then((res) => {
         if (!res.ok) throw new Error(`Trajectory request failed: ${res.status}`);
         return res.json();
@@ -1597,7 +1574,7 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
                   <span className="block mt-1 text-[9px] font-mono text-[var(--ink-faint)]">Fig. 01 / top view · not to scale</span>
                 </div>
                 <button
-                  onClick={() => setZoomPlot("/figures/3d_heliocentric_trajectory.png")}
+                  onClick={() => setZoomPlot(pub("/figures/3d_heliocentric_trajectory.png"))}
                   className="shrink-0 p-1 hover:bg-[var(--paper-3)] rounded text-[var(--ink)] flex items-center gap-1 text-[9px] font-mono uppercase border border-[var(--hairline-strong)]"
                   aria-label="Zoom heliocentric transfer figure"
                 >
@@ -1607,7 +1584,7 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
               </div>
               <figure className="relative rounded-lg overflow-hidden border border-[var(--hairline)] bg-[var(--paper-3)]">
                 <img
-                  src="/figures/3d_heliocentric_trajectory.png"
+                  src={pub("/figures/3d_heliocentric_trajectory.png")}
                   alt="Heliocentric transfer from Earth's orbit around the Sun to Mars's orbit"
                   className="w-full h-auto object-contain"
                 />
@@ -1634,7 +1611,7 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
               <div className="flex items-center justify-between pb-2 border-b border-white/5">
                 <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">Paper Figure: Specific Impulse decay</span>
                 <button 
-                  onClick={() => setZoomPlot("/figures/isp_degradation_anomaly_detection.png")}
+                  onClick={() => setZoomPlot(pub("/figures/isp_degradation_anomaly_detection.png"))}
                   className="p-1 hover:bg-white/5 rounded text-[var(--ink)] flex items-center gap-1 text-[9px] font-mono uppercase border border-[var(--hairline-strong)]"
                 >
                   <Maximize2 size={10} />
@@ -1642,9 +1619,9 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
                 </button>
               </div>
               <div className="relative group cursor-zoom-in rounded-lg overflow-hidden border border-white/10"
-                   onClick={() => setZoomPlot("/figures/isp_degradation_anomaly_detection.png")}>
+                   onClick={() => setZoomPlot(pub("/figures/isp_degradation_anomaly_detection.png"))}>
                 <img 
-                  src="/figures/isp_degradation_anomaly_detection.png" 
+                  src={pub("/figures/isp_degradation_anomaly_detection.png")}
                   alt="Isp degradation curves" 
                   className="w-full h-auto object-cover group-hover:scale-[1.02] transition-transform duration-300"
                 />
@@ -1664,7 +1641,7 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
               <div className="flex items-center justify-between pb-2 border-b border-white/5">
                 <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">Paper Figure: Thrust and propellant conservation</span>
                 <button 
-                  onClick={() => setZoomPlot("/figures/thrust_magnitude_propellant.png")}
+                  onClick={() => setZoomPlot(pub("/figures/thrust_magnitude_propellant.png"))}
                   className="p-1 hover:bg-white/5 rounded text-[var(--ink)] flex items-center gap-1 text-[9px] font-mono uppercase border border-[var(--hairline-strong)]"
                 >
                   <Maximize2 size={10} />
@@ -1672,9 +1649,9 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
                 </button>
               </div>
               <div className="relative group cursor-zoom-in rounded-lg overflow-hidden border border-white/10"
-                   onClick={() => setZoomPlot("/figures/thrust_magnitude_propellant.png")}>
+                   onClick={() => setZoomPlot(pub("/figures/thrust_magnitude_propellant.png"))}>
                 <img 
-                  src="/figures/thrust_magnitude_propellant.png" 
+                  src={pub("/figures/thrust_magnitude_propellant.png")}
                   alt="Thrust Command vs Propellant Conservation" 
                   className="w-full h-auto object-cover group-hover:scale-[1.02] transition-transform duration-300"
                 />
@@ -1982,7 +1959,7 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
                 </div>
                 
                 <div className="p-4 rounded-xl bg-[var(--paper-3)] border border-[var(--hairline)] font-mono text-[9.5px] text-[var(--ink-dim)] leading-normal space-y-1">
-                  <div><strong>Project</strong>: Houston Climate Dashboard (Visualizer)</div>
+                  <div><strong>Project</strong>: ARES-1 (PPO Guidance Console)</div>
                   <div><strong>Context</strong>: Autonomous Guidance Optimization</div>
                   <div><strong>Format</strong>: Publication Figure (.png/.pdf)</div>
                 </div>
@@ -2009,7 +1986,7 @@ export default function Globe({ embedded = false }: { embedded?: boolean }) {
       <div className="cursor-light" ref={cursorRef} aria-hidden="true" />
 
       <BootScreen done={!showBoot} />
-      <audio ref={audioRef} src="/audio/theme.mp3" loop preload="auto" playsInline muted />
+      <audio ref={audioRef} src={pub("/audio/theme.mp3")} loop preload="auto" playsInline muted />
     </ReactLenis>
   );
 }
