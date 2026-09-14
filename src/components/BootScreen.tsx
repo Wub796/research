@@ -2,23 +2,31 @@
 
 import { useEffect, useState } from "react";
 
-/** Boot sequence — "ARES 1." wordmark, fill bar, VCR percentage counter.
- *  Fixed full-screen by default; fades out when `done` flips. `overlay` marks
- *  the page-level gate, which sits above the landing chrome (progress bar)
- *  instead of just inside the console section. */
-export default function BootScreen({ done, overlay = false }: { done: boolean; overlay?: boolean }) {
+export type BootStage = "init" | "script" | "data" | "scene";
+
+/** Each stage is a real milestone in bringing the instrument up; the bar
+ *  eases toward the stage's share instead of counting on a timer. */
+const STAGES: Record<BootStage, { target: number; label: string }> = {
+  init: { target: 38, label: "Loading Cesium engine" },
+  script: { target: 66, label: "Fetching ephemerides · flight data" },
+  data: { target: 88, label: "Compiling shaders · first light" },
+  scene: { target: 100, label: "Instrument ready" },
+};
+
+export default function BootScreen({ done, overlay = false, stage = "init" }: { done: boolean; overlay?: boolean; stage?: BootStage }) {
   const [pct, setPct] = useState(0);
+  const target = done ? 100 : STAGES[stage].target;
 
   useEffect(() => {
-    if (done) {
-      setPct(100);
-      return;
-    }
     const iv = setInterval(() => {
-      setPct((p) => Math.min(96, p + Math.max(1, Math.round((96 - p) * 0.16))));
-    }, 70);
+      setPct((p) => {
+        const cap = done ? 100 : target - 1.5;
+        if (p >= cap) return p;
+        return Math.min(cap, p + Math.max(0.35, (cap - p) * 0.14));
+      });
+    }, 50);
     return () => clearInterval(iv);
-  }, [done]);
+  }, [target, done]);
 
   return (
     <div className={`boot ${overlay ? "boot--overlay " : ""}${done ? "is-done" : ""}`} role="status" aria-label="Loading">
@@ -26,10 +34,12 @@ export default function BootScreen({ done, overlay = false }: { done: boolean; o
         ARES<em>1.</em>
       </p>
       <div className="boot__bar">
-        <span style={{ width: `${pct}%` }} />
+        <span style={{ transform: `scaleX(${pct / 100})` }} />
       </div>
       <div className="boot__pct">{String(Math.round(pct)).padStart(3, "0")}</div>
-      <div className="boot__line">PPO guidance · trajectory scheduler</div>
+      <div className="boot__line" aria-live="polite">
+        {done ? STAGES.scene.label : STAGES[stage].label}
+      </div>
     </div>
   );
 }
