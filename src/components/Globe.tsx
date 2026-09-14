@@ -27,7 +27,7 @@ const FIGURES = [
   {
     src: "/figures/3d_heliocentric_trajectory.png",
     title: "Heliocentric transfer",
-    caption: "Earth (a = 1.00 AU) and Mars (a = 1.52 AU) reference orbits with the ARES-1 transfer path. Top view; body sizes exaggerated.",
+    caption: "Mean ecliptic J2000, heliocentric: Earth (a = 1.00 AU) and Mars (a = 1.52 AU) orbits with the ARES-1 transfer, propagated under solar gravity and the engine's commanded thrust.",
   },
   {
     src: "/figures/isp_degradation_anomaly_detection.png",
@@ -37,7 +37,7 @@ const FIGURES = [
   {
     src: "/figures/thrust_magnitude_propellant.png",
     title: "Thrust & propellant",
-    caption: "Commanded thrust (≤ 0.289 N) against propellant mass. 509 kg of the 1,099 kg load is spent over the 11,040 h transfer.",
+    caption: "Commanded thrust (≤ 0.289 N) against remaining propellant over the 11,040 h transfer. Mass flow follows the Isp schedule, so the post-lock engine spends more xenon per newton.",
   },
 ];
 
@@ -690,6 +690,10 @@ export default function Globe({ onReady, onStage }: { onReady?: () => void; onSt
             <Stat label="Mars range" value={nf(t.marsRangeKm / 1e6, 2)} unit="M km" sub={`relative speed ${t.marsRelSpeedKms.toFixed(2)} km/s`}>
               <Spark values={sparks.mars} hours={mission.hours} hour={hour} lo={0} />
             </Stat>
+            <p className="ac-provenance">
+              Flight path integrated from launch under solar gravity and the commanded thrust (DOP853). The thrust schedule is an optimized reference under the study&apos;s engine model
+              {mission.summary.launchVinfKms !== undefined && ` · launch v∞ ${mission.summary.launchVinfKms.toFixed(2)} km/s`}.
+            </p>
           </div>
         )}
       </aside>

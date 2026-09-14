@@ -71,19 +71,62 @@ src/
     paths.ts              GitHub Pages base-path helper (mirrors next.config.mjs)
 ```
 
+## The flight path is physically propagated
+
+The trajectory the site draws is **not** `artifacts/optimal_mars_trajectory.csv`.
+That file is a geometric blend between Earth's and Mars' ephemerides (it
+matches `research/scripts/generate_transfer_trajectory.py` exactly): it needs
+~25× the acceleration the thruster can make, and replaying its thrust commands
+through real dynamics ends ~360 million km from Mars.
+
+`scripts/design_transfer.py` replaces it with a transfer that obeys the
+equations of motion under the study's own hardware and timeline:
+
+- heliocentric point-mass Sun + continuous thrust, integrated with DOP853
+  (planetary perturbations neglected — Jupiter is < 0.4% of thrust acceleration)
+- SPT-140: T ≤ 0.289 N; Isp 1,782 s → log decay from 1,000 h → 1,514.7 s lock at
+  1,500 h; ṁ = T/(Isp·g0); 2,747 kg wet, 1,648 kg dry
+- launch 2027-02-19 from Earth with a launch-vehicle v∞; arrival fixed at
+  11,040 h at Mars' position (intercept — the research environment's success test)
+- smooth Chebyshev steering and throttle; SLSQP minimises launch and arrival
+  speeds, then a polish closes the intercept exactly
+
+| Result | Value |
+| --- | --- |
+| Launch v∞ / C3 | 4.26 km/s / 18.1 km²/s² |
+| Arrival speed relative to Mars | 3.62 km/s |
+| Engine Δv / mean throttle | 4.88 km/s / 99.9% |
+| Propellant used | 761 kg of 1,099 kg |
+| Sun distance | 0.99 – 1.70 AU |
+
+A rendezvous (zero relative speed) is not reachable on these dates: the
+ballistic arc arrives at 9.1 km/s relative to Mars, about twice the engine's
+whole Δv budget. **Checks** (printed by the script): terminal miss 11 m;
+Radau vs DOP853 terminal difference 13 m; finite-difference acceleration vs
+gravity + thrust residual < 1×10⁻⁹ m/s²; implied thrust never exceeds 0.289 N.
+Replaying the hourly commands through `SpacecraftEnv.step()`'s 1-hour
+semi-implicit Euler lands 299,000 km from Mars — inside its 577,000 km
+success radius.
+
+The thrust schedule is an optimized reference under the study's engine model,
+not a PPO rollout (the trained policy could not be replayed here); the console
+says so beside the telemetry.
+
 ## Regenerating the flight data
 
-`scripts/export_mission.py` needs astropy (the research repo's venv has it):
+All three scripts need astropy + scipy (the research repo's venv has them):
 
 ```bash
-/path/to/research/.venv/bin/python scripts/export_mission.py
+/path/to/research/.venv/bin/python scripts/design_transfer.py   # CSV + checks from the saved solution (--optimize to re-solve)
+/path/to/research/.venv/bin/python scripts/export_mission.py    # mission.json + orrery geometry
+/path/to/research/.venv/bin/python scripts/visualize.py         # paper figures → artifacts/ (copy PNGs to public/figures)
 ```
 
-It converts the barycentric-equatorial CSV into heliocentric mean-ecliptic
-J2000 (removing the Sun's barycentric offset and the 23.4° equatorial tilt the
-previous export drew), samples the spacecraft every 2 h and the planets daily
-with velocities for Hermite interpolation, and prints the summary numbers the
-site quotes.
+`export_mission.py` converts the barycentric-equatorial CSV into heliocentric
+mean-ecliptic J2000 (removing the Sun's barycentric offset and the 23.4°
+equatorial tilt), samples the spacecraft every 2 h and the planets daily with
+velocities for Hermite interpolation, and prints the summary numbers the site
+quotes.
 
 ## Tech stack
 

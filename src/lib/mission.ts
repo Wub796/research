@@ -17,6 +17,7 @@ export interface MissionEvent {
 }
 
 export interface MissionSummary {
+  launchVinfKms?: number;
   launchUtc: string;
   arrivalUtc: string;
   earthMarsAtLaunchKm: number;

@@ -19,8 +19,13 @@ Sampling
   splines, which reproduces the planets to well under a kilometre.
 
 Run with an astropy-enabled interpreter (e.g. the research repo's venv):
-    /path/to/research/.venv/bin/python scripts/export_mission.py
+    /path/to/research/.venv/bin/python scripts/export_mission.py [--csv PATH]
+
+The default input is the physically propagated transfer written by
+scripts/design_transfer.py; its velocities are integrated states, so they
+are used as-is for the Hermite splines.
 """
+import argparse
 import json
 import os
 
@@ -31,7 +36,7 @@ from astropy.coordinates import get_body_barycentric_posvel
 from astropy.time import Time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CSV_PATH = os.path.join(ROOT, "artifacts", "optimal_mars_trajectory.csv")
+CSV_PATH = os.path.join(ROOT, "artifacts", "ares1_physical_transfer.csv")
 OUT_JSON = os.path.join(ROOT, "public", "mission.json")
 OUT_TS = os.path.join(ROOT, "src", "lib", "orrery.generated.ts")
 
@@ -88,7 +93,10 @@ def flat(array, decimals):
 
 
 def main():
-    df = pd.read_csv(CSV_PATH)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", default=CSV_PATH)
+    csv_path = parser.parse_args().csv
+    df = pd.read_csv(csv_path)
     hours_all = df["time_step_hr"].to_numpy(dtype=int)
     assert hours_all[0] == 0 and hours_all[-1] == MISSION_H, "CSV must span 0…11,040 h"
 
@@ -96,7 +104,7 @@ def main():
     sun_p, sun_v = barycentric("sun", hours_all)
     sc_bary = df[["sc_x_km", "sc_y_km", "sc_z_km"]].to_numpy()
     sc = to_ecliptic(sc_bary - sun_p)
-    sc_vel = np.gradient(sc, 3600.0, axis=0)  # central differences, km/s
+    sc_vel = to_ecliptic(df[["sc_vx_km_s", "sc_vy_km_s", "sc_vz_km_s"]].to_numpy() - sun_v)
 
     thrust = df["thrust_cmd_N"].to_numpy()
     theta = df["thrust_theta_rad"].to_numpy()
@@ -129,7 +137,9 @@ def main():
     speed = np.linalg.norm(sc_vel, axis=1)
     range_earth = np.linalg.norm(sc - earth_h, axis=1)
     path_km = float(np.sum(np.linalg.norm(np.diff(sc, axis=0), axis=1)))
+    earth_v0 = to_ecliptic(e_h[1][:1] - sun_v[:1])[0]
     summary = {
+        "launchVinfKms": round(float(np.linalg.norm(sc_vel[0] - earth_v0)), 3),
         "launchUtc": EPOCH.utc.isot + "Z",
         "arrivalUtc": (EPOCH + MISSION_H * u.hour).utc.isot + "Z",
         "earthMarsAtLaunchKm": round(float(np.linalg.norm(mars_h[0] - earth_h[0])), 0),
@@ -154,7 +164,7 @@ def main():
             "units": {"position": "km", "velocity": "km/s", "time": "h after epoch"},
             "epochUtc": summary["launchUtc"],
             "missionHours": MISSION_H,
-            "source": os.path.relpath(CSV_PATH, ROOT),
+            "source": os.path.relpath(csv_path, ROOT),
             "ephemeris": "astropy builtin (ERFA)",
             "constants": {
                 "auKm": AU_KM, "cKms": C_KMS, "g0": G0, "muSun": MU_SUN,
@@ -165,7 +175,7 @@ def main():
             "summary": summary,
         },
         "events": [
-            {"h": 0, "key": "launch", "label": "Earth departure", "detail": "PPO policy engaged at 1,782 s Isp"},
+            {"h": 0, "key": "launch", "label": "Earth departure", "detail": "Low-thrust cruise begins at 1,782 s Isp"},
             {"h": 1000, "key": "decay", "label": "Isp decay onset", "detail": "logarithmic specific-impulse slide begins"},
             {"h": 1497, "key": "flag", "label": "Isolation Forest flag", "detail": "anomalous engine signature detected"},
             {"h": 1500, "key": "lock", "label": "Failure lock", "detail": "Isp locked at 1,514.7 s for the rest of the cruise"},

@@ -202,7 +202,7 @@ function ConsolePortal({ children, sectionRef }: { children: ReactNode; sectionR
       <div className="research-console-label">
         <span>04 · LIVE INSTRUMENT</span>
         <span className="research-console-facts">
-          {summary.launchUtc.slice(0, 10)} → {summary.arrivalUtc.slice(0, 10)} · {fmtM(summary.pathLengthKm)} FLOWN · Δv {summary.deltaVKms.toFixed(2)} KM/S
+          {summary.launchUtc.slice(0, 10)} → {summary.arrivalUtc.slice(0, 10)} · {fmtM(summary.pathLengthKm)} FLOWN · C3 {(summary.launchVinfKms ** 2).toFixed(1)} KM²/S² · ENGINE Δv {summary.deltaVKms.toFixed(2)} KM/S
         </span>
       </div>
       <motion.div className="research-console-body" style={{ transform: bodyTransform }}>{children}</motion.div>

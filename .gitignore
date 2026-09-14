@@ -41,3 +41,6 @@ next-env.d.ts
 
 # freebuff dev-server runtime logs (churn on every restart; never tracked)
 .freebuff/*.log
+
+# python bytecode from running scripts/
+__pycache__/
