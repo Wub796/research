@@ -9,6 +9,8 @@ import HeroOrrery from '../components/HeroOrrery';
 import SignalChart from '../components/SignalChart';
 import SmoothScroll from '../components/SmoothScroll';
 import { DecodeText, Magnetic } from '../components/fx';
+import BlurText from '../components/bits/BlurText';
+import Aurora from '../components/bits/Aurora';
 import { orrery } from '../lib/orrery.generated';
 import { pub } from '../lib/paths';
 
@@ -210,6 +212,81 @@ function ConsolePortal({ children, sectionRef }: { children: ReactNode; sectionR
   );
 }
 
+const methodologyCards = [
+  {
+    number: 'M-01',
+    title: 'PPO TRAINING',
+    body: 'A proximal policy optimization controller learns thrust-vector commands across 11,040 hours of simulated cruise, trained only against a healthy engine model.',
+    metric: '1,782 S NOMINAL ISP',
+    crisis: false,
+  },
+  {
+    number: 'M-02',
+    title: 'TRANSFER DESIGN',
+    body: 'Low-thrust heliocentric trajectory under Sun-only gravity. DOP853 integration, Chebyshev steering, SLSQP-optimized launch and arrival windows.',
+    metric: '4.88 KM/S ENGINE ΔV',
+    crisis: false,
+  },
+  {
+    number: 'M-03',
+    title: 'ANOMALY INJECTION',
+    body: 'Specific impulse begins a logarithmic decay at hour 1,000. At hour 1,500 the engine locks at 1,514.7 seconds — the policy was never trained for this.',
+    metric: '500 H DECAY WINDOW',
+    crisis: true,
+  },
+  {
+    number: 'M-04',
+    title: 'ISOLATION FOREST',
+    body: 'An unsupervised anomaly detector watches engine telemetry. It flags the first off-nominal signature at hour 1,497 — three hours before the permanent lock.',
+    metric: '3 H EARLY WARNING',
+    crisis: true,
+  },
+];
+
+/** The methodology interstitial — four glassmorphism cards over an aurora
+ *  background, each floating in on scroll. Sits between the CTA and the
+ *  console portal to frame the research pipeline before the live instrument. */
+function MissionMethodology() {
+  const reduce = useReducedMotion() ?? false;
+  return (
+    <section className="methodology" aria-label="Research methodology">
+      {!reduce && (
+        <div className="methodology__aurora" aria-hidden="true">
+          <Aurora colorStops={['#1a0533', '#0d4b8a', '#1b2838']} amplitude={1.2} blend={0.6} speed={0.6} />
+        </div>
+      )}
+      <div className="methodology__inner">
+        <div className="methodology__header">
+          <p className="research-index"><DecodeText text="THE METHOD" /></p>
+          <BlurText
+            text="Four stages. One question."
+            className="text-[clamp(1.6rem,4vw,3rem)] font-bold tracking-tight leading-tight"
+            delay={80}
+            animateBy="words"
+          />
+        </div>
+        <div className="methodology__grid">
+          {methodologyCards.map((card, i) => (
+            <motion.div
+              key={card.number}
+              className={`methodology__card${card.crisis ? ' is-crisis' : ''}`}
+              initial={reduce ? false : { opacity: 0, y: 40, filter: 'blur(8px)' }}
+              whileInView={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              viewport={{ once: true, amount: 0.3 }}
+              transition={{ duration: 0.8, ease: EDITORIAL, delay: 0.12 * i }}
+            >
+              <p className="methodology__card-number"><DecodeText text={card.number} /></p>
+              <h3>{card.title}</h3>
+              <p>{card.body}</p>
+              <p className="methodology__card-metric"><DecodeText text={card.metric} /></p>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { cesiumReady: boolean; booted: boolean; onInstrumentReady: () => void; onStage: (s: 'data' | 'scene') => void }) {
   const pageRef = useRef<HTMLElement>(null);
   const heroRef = useRef<HTMLElement>(null);
@@ -251,6 +328,11 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
     <main className="research-site" ref={pageRef}>
       <motion.div className="research-progress" style={{ scaleX: progress }} />
       <section className="research-hero" ref={heroRef}>
+        {!reduce && (
+          <div className="research-hero__aurora" aria-hidden="true">
+            <Aurora colorStops={['#0d1b2a', '#1a0533', '#0d4b8a']} amplitude={0.8} blend={0.4} speed={0.4} />
+          </div>
+        )}
         <motion.div className="research-topline" {...enter(0, -14, 0)}>
           <span><DecodeText text="ARES-1 / FIELD NOTE 001" active={booted} /></span>
           <span><DecodeText text="EARTH → MARS · 2027–2028" active={booted} delay={120} /></span>
@@ -291,7 +373,13 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
         <p className="research-index"><DecodeText text="THE BRIEF / 2026" /></p>
         <Parallax className="research-intro-copy" from={60} to={-60}>
           <ScrubStatement lines={[{ text: 'Not a dashboard.' }, { text: 'A controlled encounter with uncertainty.', em: true }]} />
-          <p>ARES-1 is an interactive visualization of a guidance research study. It turns model behavior, propulsion degradation, and orbital geometry into something you can interrogate rather than merely admire.</p>
+          <BlurText
+            text="ARES-1 is an interactive visualization of a guidance research study. It turns model behavior, propulsion degradation, and orbital geometry into something you can interrogate rather than merely admire."
+            className="text-base leading-relaxed"
+            animateBy="words"
+            delay={30}
+            stepDuration={0.4}
+          />
         </Parallax>
       </section>
 
@@ -322,6 +410,8 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
           <button className="research-launch" onClick={jumpToConsole}>ENTER ARES-1 <span className="research-launch-arrow">↘</span></button>
         </Magnetic>
       </section>
+
+      <MissionMethodology />
 
       <ConsolePortal sectionRef={consoleRef}>
         {cesiumReady ? (

@@ -1,4 +1,5 @@
 @import "cesium/Build/Cesium/Widgets/widgets.css";
+@import "lenis/dist/lenis.css";
 
 @tailwind base;
 @tailwind components;
@@ -561,4 +562,121 @@ html.has-reticle .reticle{display:block}
   .ac-vignette[data-pulse="on"]{animation-duration:.6s}
   .ac-panel__swap{animation:none}
   .ac-seg__active{transition:none}
+}
+
+/* ============================================================
+   METHODOLOGY SECTION
+   ============================================================ */
+
+.methodology {
+  position: relative;
+  padding: 14vh 0;
+  overflow: hidden;
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.methodology__aurora {
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.methodology__inner {
+  position: relative;
+  z-index: 1;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0 clamp(1.5rem, 4vw, 4rem);
+}
+
+.methodology__header {
+  margin-bottom: 6rem;
+  text-align: center;
+}
+
+.methodology__header .blur-text {
+  justify-content: center;
+}
+
+.methodology__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem;
+}
+
+@media (max-width: 768px) {
+  .methodology__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.methodology__card {
+  position: relative;
+  padding: 2.2rem 2rem;
+  border-radius: 16px;
+  background: rgba(240, 238, 232, 0.04);
+  border: 1px solid rgba(240, 238, 232, 0.08);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  transition: border-color 0.4s, background 0.4s;
+}
+
+.methodology__card:hover {
+  border-color: rgba(240, 238, 232, 0.16);
+  background: rgba(240, 238, 232, 0.07);
+}
+
+.methodology__card-number {
+  font-family: 'VCR', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  color: var(--c-faint);
+  margin-bottom: 0.6rem;
+}
+
+.methodology__card h3 {
+  font-family: 'Helv', Helvetica, Arial, sans-serif;
+  font-size: clamp(1.1rem, 2vw, 1.35rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.8rem;
+  color: var(--c-ink);
+}
+
+.methodology__card p {
+  font-family: 'Helv', Helvetica, Arial, sans-serif;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--c-dim);
+}
+
+.methodology__card-metric {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(240, 238, 232, 0.08);
+  font-family: 'VCR', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: var(--c-faint);
+}
+
+.methodology__card.is-crisis .methodology__card-number {
+  color: var(--accent);
+}
+
+.methodology__card.is-crisis h3 {
+  color: var(--accent);
+}
+
+/* Hero aurora overlay */
+.research-hero__aurora {
+  position: absolute;
+  inset: 0;
+  opacity: 0.2;
+  pointer-events: none;
+  z-index: 0;
+  mix-blend-mode: screen;
 }

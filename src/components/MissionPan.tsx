@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { DecodeText } from "./fx";
 
-gsap.registerPlugin(ScrollTrigger);
+gsap.registerPlugin(ScrollTrigger, useGSAP);
 
 // The five decision points of the ARES-1 transfer, as a horizontal filmstrip.
 // Desktop: ScrollTrigger pins the section and scrubs the track sideways in
@@ -30,7 +31,7 @@ export default function MissionPan() {
   const readoutRef = useRef<HTMLSpanElement>(null);
   const [isPan, setIsPan] = useState(false);
 
-  useEffect(() => {
+  useGSAP(() => {
     const mm = gsap.matchMedia();
     mm.add("(min-width: 769px) and (prefers-reduced-motion: no-preference)", () => {
       const section = sectionRef.current;
@@ -126,7 +127,7 @@ export default function MissionPan() {
       };
     });
     return () => mm.revert();
-  }, []);
+  }, { scope: sectionRef });
 
   return (
     <section ref={sectionRef} className={"mission-pan" + (isPan ? " is-panning" : "")} aria-label="The mission in five phases">
