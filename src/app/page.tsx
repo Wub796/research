@@ -523,39 +523,73 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
           <span><DecodeText text="ARES-1 / FIELD NOTE 001 · J2000 ECLIPTIC TRANSFER" active={booted} /></span>
           <span><DecodeText text="EARTH → MARS · 2027-02-19 TO 2028-05-24 UTC" active={booted} delay={120} /></span>
         </motion.div>
-        <motion.div
-          className="research-orrery-wrap"
-          initial={reduce ? false : { opacity: 0, transform: 'scale(0.94)' }}
-          animate={booted ? { opacity: 1, transform: 'scale(1)' } : undefined}
-          transition={{ duration: 1.6, ease: EDITORIAL, delay: 0.1 }}
-        >
-          <HeroOrrery booted={booted} target={heroRef} />
-        </motion.div>
-        <motion.div className="research-hero-copy" style={{ transform: titleTransform, opacity: titleOpacity }}>
-          <motion.p className="research-kicker" {...enter(0.18)}>
-            <DecodeText text="00 · ASTRODYNAMICS & FAULT-TOLERANT CONTROL" active={booted} delay={180} />
-          </motion.p>
-          <motion.h1 {...enter(0.28, 34, 12)}>ARES<span>1.</span></motion.h1>
-          <motion.p className="research-deck" {...enter(0.4, 30, 8)}>
-            What happens when autonomous guidance has to keep flying after propulsion starts to fail?
-          </motion.p>
-          <motion.div className="research-hero-actions" {...enter(0.52, 22, 0)}>
-            <Magnetic>
-              <button className="research-launch" onClick={jumpToConsole}>
-                ENTER ARES-1 CONSOLE <span className="research-launch-arrow">↘</span>
-              </button>
-            </Magnetic>
-            <button type="button" className="research-secondary-btn" onClick={() => scrollToSection('section-signal')}>
-              INSPECT ISP SIGNAL ↓
-            </button>
+
+        <div className="research-hero-split">
+          <motion.div className="research-hero-copy" style={{ transform: titleTransform, opacity: titleOpacity }}>
+            <motion.p className="research-kicker" {...enter(0.18)}>
+              <DecodeText text="00 · ASTRODYNAMICS & FAULT-TOLERANT CONTROL" active={booted} delay={180} />
+            </motion.p>
+            <motion.h1 {...enter(0.28, 34, 12)}>ARES<span>1.</span></motion.h1>
+            <motion.p className="research-deck" {...enter(0.4, 30, 8)}>
+              What happens when autonomous guidance has to keep flying after propulsion starts to fail?
+            </motion.p>
+            <motion.div className="research-hero-actions" {...enter(0.52, 22, 0)}>
+              <Magnetic>
+                <button className="research-launch" onClick={jumpToConsole}>
+                  ENTER ARES-1 CONSOLE <span className="research-launch-arrow">↘</span>
+                </button>
+              </Magnetic>
+              <Magnetic>
+                <button type="button" className="research-secondary-btn" onClick={() => scrollToSection('section-signal')}>
+                  INSPECT ISP SIGNAL ↓
+                </button>
+              </Magnetic>
+            </motion.div>
+
+            {/* Structured Swiss Specification Ledger */}
+            <motion.div className="research-hero-ledger" {...enter(0.62, 16, 0)}>
+              <div className="hero-ledger-row">
+                <span className="hero-ledger-k">CRUISE DURATION</span>
+                <span className="hero-ledger-v">11,040 H · 460 DAYS</span>
+              </div>
+              <div className="hero-ledger-row">
+                <span className="hero-ledger-k">TRANSFER ARC</span>
+                <span className="hero-ledger-v">948M KM FLOWN</span>
+              </div>
+              <div className="hero-ledger-row">
+                <span className="hero-ledger-k">ERROR REDUCTION</span>
+                <span className="hero-ledger-v is-accent">−55.8% (5.87M → 2.60M KM)</span>
+              </div>
+              <div className="hero-ledger-row">
+                <span className="hero-ledger-k">INFERENCE MARGIN</span>
+                <span className="hero-ledger-v">1.94 µs (&gt;99.99999%)</span>
+              </div>
+              <div className="hero-ledger-row">
+                <span className="hero-ledger-k">COLLECTIVE DETECTOR</span>
+                <span className="hero-ledger-v">F₁ = 0.990 · 0 FALSE ALARMS</span>
+              </div>
+              <div className="hero-ledger-row">
+                <span className="hero-ledger-k">HALL PROPULSION</span>
+                <span className="hero-ledger-v">SPT-140 · 4.5 KW XE</span>
+              </div>
+            </motion.div>
           </motion.div>
-        </motion.div>
+
+          <motion.div
+            className="research-hero-plate"
+            initial={reduce ? false : { opacity: 0, transform: 'scale(0.96)' }}
+            animate={booted ? { opacity: 1, transform: 'scale(1)' } : undefined}
+            transition={{ duration: 1.4, ease: EDITORIAL, delay: 0.15 }}
+          >
+            <HeroOrrery booted={booted} target={heroRef} />
+          </motion.div>
+        </div>
+
         <motion.div className="research-hero-facts" {...enter(0.7, 12, 0)} aria-label="Mission at a glance">
-          <span><b>11,040</b> H CRUISE DURATION</span>
-          <span><b>{Math.round(summary.pathLengthKm / 1e6)}M</b> KM HELIOCENTRIC ARC</span>
-          <span><b>55.8%</b> TERMINAL ERROR CUT</span>
-          <span><b>1.94 µS / 1.90 KB</b> INFERENCE</span>
-          <span><b>F₁ = 0.990</b> COLLECTIVE IF</span>
+          <span><b>OPERATIONAL DRIFT:</b> 3–14D NASA DSN DELAY</span>
+          <span><b>ONBOARD CLOSURE:</b> 1.94 µS / 1.90 KB POLICY</span>
+          <span><b>ANOMALY FILTER:</b> F₁ = 0.990 (0 FALSE ALARMS)</span>
+          <span><b>PROPULSION:</b> SPT-140 HALL (279.9 MN)</span>
         </motion.div>
       </section>
 

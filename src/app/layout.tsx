@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import CursorReticle from "../components/CursorReticle";
 
 export const metadata: Metadata = {
   title: "ARES-1 · Autonomous Fault-Tolerant Neural Guidance Console",
@@ -14,9 +13,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {children}
         {/* Paper/matte film grain over everything — never blocks input */}
         <div className="grain" aria-hidden="true" />
-        {/* Mission-control reticle cursor — hides the native pointer on
-            fine-pointer, non-reduced-motion devices only */}
-        <CursorReticle />
       </body>
     </html>
   );

@@ -633,7 +633,7 @@ export default function Globe({ onReady, onStage }: { onReady?: () => void; onSt
         </span>
         {[0, 90, 180, 270].map((deg) => (
           <span key={deg} className="ac-label ac-label--lon" data-label={`lon${deg}`} data-visible="false">
-            {deg === 0 ? "λ 0° ♈" : `λ ${deg}°`}
+            {deg === 0 ? "λ 0° γ" : `λ ${deg}°`}
           </span>
         ))}
       </div>

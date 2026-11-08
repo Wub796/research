@@ -175,93 +175,107 @@ export default function HeroOrrery({ booted, target }: { booted: boolean; target
   const [mx0, my0] = xy(mars[0]);
 
   return (
-    <div className="orrery" data-booted={booted}>
-      {/* Technical drafting corner fiducials */}
-      <div className="orrery__fiducials" aria-hidden="true">
-        <span className="orrery__fid orrery__fid--tl">REF · J2000.0 ECLIPTIC</span>
-        <span className="orrery__fid orrery__fid--tr">DWG · ARES-1-001-A</span>
-        <span className="orrery__fid orrery__fid--bl">SCALE · 1 AU = 196U</span>
-        <span className="orrery__fid orrery__fid--br">EPOCH · 2027-02-19 UTC</span>
+    <div className="orrery-plate" data-booted={booted}>
+      {/* Plate Header */}
+      <div className="orrery-plate__head">
+        <div className="orrery-plate__head-left">
+          <span className="orrery-plate__badge">PLATE 01</span>
+          <span className="orrery-plate__title">J2000 HELIOCENTRIC ORBITAL PLANE</span>
+        </div>
+        <div className="orrery-plate__head-right">
+          <span>SCALE · 1 AU = 196U</span>
+        </div>
       </div>
 
-      <motion.div className="orrery__plane" style={{ transform }} aria-hidden="true">
-        <svg className="orrery__svg" viewBox="-430 -430 860 860">
-          {/* Reference heliocentric AU rings */}
-          <circle className="orrery__au-ring" r={0.5 * S} />
-          <circle className="orrery__au-ring" r={1.0 * S} />
-          <circle className="orrery__au-ring" r={1.5 * S} />
-          <line className="orrery__crosshair" x1={-1.86 * S} y1={0} x2={1.86 * S} y2={0} />
-          <line className="orrery__crosshair" x1={0} y1={-1.86 * S} x2={0} y2={1.86 * S} />
+      {/* Plate Canvas Area with Corner Fiducials */}
+      <div className="orrery-plate__canvas-wrap">
+        <div className="orrery__fiducials" aria-hidden="true">
+          <span className="orrery__fid orrery__fid--tl">γ 0° EQUINOX</span>
+          <span className="orrery__fid orrery__fid--tr">DWG · ARES-1</span>
+          <span className="orrery__fid orrery__fid--bl">SOL-CENTERED</span>
+          <span className="orrery__fid orrery__fid--br">EPOCH · 2027</span>
+        </div>
 
-          <circle className="orrery__compass" r={1.86 * S} pathLength={1} data-draw />
-          {geo.ticks.map((t) => (
-            <g key={t.i}>
-              <path d={t.d} className={`orrery__tick${t.major ? " is-major" : t.mid ? " is-mid" : ""}`} />
-              {t.major && (
-                <text className="orrery__lon" x={t.lx} y={t.ly + 3} textAnchor="middle">
-                  {t.deg === 0 ? "0° ♈" : `${t.deg}°`}
+        <motion.div className="orrery__plane" style={{ transform }} aria-hidden="true">
+          <svg className="orrery__svg" viewBox="-430 -430 860 860">
+            {/* Reference heliocentric AU rings */}
+            <circle className="orrery__au-ring" r={0.5 * S} />
+            <circle className="orrery__au-ring" r={1.0 * S} />
+            <circle className="orrery__au-ring" r={1.5 * S} />
+            <line className="orrery__crosshair" x1={-1.86 * S} y1={0} x2={1.86 * S} y2={0} />
+            <line className="orrery__crosshair" x1={0} y1={-1.86 * S} x2={0} y2={1.86 * S} />
+
+            <circle className="orrery__compass" r={1.86 * S} pathLength={1} data-draw />
+            {geo.ticks.map((t) => (
+              <g key={t.i}>
+                <path d={t.d} className={`orrery__tick${t.major ? " is-major" : t.mid ? " is-mid" : ""}`} />
+                {t.major && (
+                  <text className="orrery__lon" x={t.lx} y={t.ly + 3} textAnchor="middle">
+                    {t.deg === 0 ? "0° γ" : `${t.deg}°`}
+                  </text>
+                )}
+              </g>
+            ))}
+
+            {/* Direct Launch-to-Arrival synodic chord */}
+            <path d={geo.chord} className="orrery__chord" />
+
+            {/* Planetary orbits & low-thrust transfer */}
+            <path d={geo.earthOrbit} className="orrery__orbit orrery__orbit--earth" pathLength={1} data-draw />
+            <path d={geo.marsOrbit} className="orrery__orbit orrery__orbit--mars" pathLength={1} data-draw />
+            <path d={geo.thrustComb} className="orrery__comb" />
+            <path d={geo.transfer} className="orrery__planned" pathLength={1} data-draw />
+            <path ref={flownRef} d={geo.transfer} className="orrery__flown" pathLength={1} />
+
+            {/* Live dynamic telemetry vectors */}
+            <line ref={sunVecRef} x1={0} y1={0} x2={sx0} y2={sy0} className="orrery__vec-sun" />
+            <line ref={earthChordRef} x1={ex0} y1={ey0} x2={sx0} y2={sy0} className="orrery__vec-earth" />
+
+            {geo.events.map((e) => (
+              <g
+                key={e.h}
+                transform={`translate(${e.p[0].toFixed(1)} ${e.p[1].toFixed(1)})`}
+                className={`orrery__event${e.crit ? " is-crit" : ""}`}
+              >
+                <line x1={0} y1={0} x2={e.h === 1497 ? -18 : 16} y2={e.h === 1497 ? 16 : -14} className="orrery__event-leader" />
+                <rect x={-3.5} y={-3.5} width={7} height={7} transform="rotate(45)" />
+                <text x={e.h === 1497 ? -22 : 20} y={e.h === 1497 ? 24 : -14} textAnchor={e.h === 1497 ? "end" : "start"}>
+                  {e.tag}
                 </text>
-              )}
+              </g>
+            ))}
+
+            <g className="orrery__sun">
+              <circle r={18} className="orrery__sun-halo" />
+              <circle r={6.5} />
+              <text x={12} y={14} className="orrery__body-tag">SOL</text>
             </g>
-          ))}
-
-          {/* Direct Launch-to-Arrival synodic chord */}
-          <path d={geo.chord} className="orrery__chord" />
-
-          {/* Planetary orbits & low-thrust transfer */}
-          <path d={geo.earthOrbit} className="orrery__orbit orrery__orbit--earth" pathLength={1} data-draw />
-          <path d={geo.marsOrbit} className="orrery__orbit orrery__orbit--mars" pathLength={1} data-draw />
-          <path d={geo.thrustComb} className="orrery__comb" />
-          <path d={geo.transfer} className="orrery__planned" pathLength={1} data-draw />
-          <path ref={flownRef} d={geo.transfer} className="orrery__flown" pathLength={1} />
-
-          {/* Live dynamic telemetry vectors */}
-          <line ref={sunVecRef} x1={0} y1={0} x2={sx0} y2={sy0} className="orrery__vec-sun" />
-          <line ref={earthChordRef} x1={ex0} y1={ey0} x2={sx0} y2={sy0} className="orrery__vec-earth" />
-
-          {geo.events.map((e) => (
-            <g
-              key={e.h}
-              transform={`translate(${e.p[0].toFixed(1)} ${e.p[1].toFixed(1)})`}
-              className={`orrery__event${e.crit ? " is-crit" : ""}`}
-            >
-              <line x1={0} y1={0} x2={e.h === 1497 ? -18 : 16} y2={e.h === 1497 ? 16 : -14} className="orrery__event-leader" />
+            <g ref={earthRef} className="orrery__earth" transform={`translate(${ex0} ${ey0})`}>
+              <circle r={4.5} />
+              <text x={9} y={4}>EARTH · 1.00 AU</text>
+            </g>
+            <g ref={marsRef} className="orrery__mars" transform={`translate(${mx0} ${my0})`}>
+              <circle r={4.5} />
+              <text x={9} y={4}>MARS · 1.52 AU</text>
+            </g>
+            <g ref={scRef} className="orrery__sc" transform={`translate(${sx0} ${sy0})`}>
+              <circle r={10} className="orrery__sc-ping" />
               <rect x={-3.5} y={-3.5} width={7} height={7} transform="rotate(45)" />
-              <text x={e.h === 1497 ? -22 : 20} y={e.h === 1497 ? 24 : -14} textAnchor={e.h === 1497 ? "end" : "start"}>
-                {e.tag}
-              </text>
+              <text x={10} y={-8} className="orrery__sc-tag">ARES-1</text>
             </g>
-          ))}
+          </svg>
+        </motion.div>
+      </div>
 
-          <g className="orrery__sun">
-            <circle r={18} className="orrery__sun-halo" />
-            <circle r={6.5} />
-            <text x={12} y={14} className="orrery__body-tag">SOL</text>
-          </g>
-          <g ref={earthRef} className="orrery__earth" transform={`translate(${ex0} ${ey0})`}>
-            <circle r={4.5} />
-            <text x={9} y={4}>EARTH · 1.00 AU</text>
-          </g>
-          <g ref={marsRef} className="orrery__mars" transform={`translate(${mx0} ${my0})`}>
-            <circle r={4.5} />
-            <text x={9} y={4}>MARS · 1.52 AU</text>
-          </g>
-          <g ref={scRef} className="orrery__sc" transform={`translate(${sx0} ${sy0})`}>
-            <circle r={10} className="orrery__sc-ping" />
-            <rect x={-3.5} y={-3.5} width={7} height={7} transform="rotate(45)" />
-            <text x={10} y={-8} className="orrery__sc-tag">ARES-1</text>
-          </g>
-        </svg>
-      </motion.div>
-
-      <div className="orrery__hud">
-        <div className="orrery__readout" aria-live="off">
-          <span ref={metRef} className="orrery__readout-primary">T+00000 H</span>
+      {/* Plate Footer: Live Telemetry & Quick-Epoch Pills */}
+      <div className="orrery-plate__foot">
+        <div className="orrery-plate__readout" aria-live="off">
+          <span ref={metRef} className="orrery-plate__readout-primary">T+00000 H</span>
           <span ref={dateRef}>{orrery.summary.launchUtc.slice(0, 10)}</span>
           <span ref={radRef}>R 0.988 AU (148M KM)</span>
           <span ref={ispRef}>ISP 1782.0 S</span>
         </div>
-        <div className="orrery__pills" role="group" aria-label="Inspect mission epoch on hero plate">
+        <div className="orrery-plate__pills" role="group" aria-label="Inspect mission epoch on hero plate">
           {KEY_HOURS.map((item) => {
             const f = item.h / HOURS;
             const active = manualFrac !== null && Math.abs(manualFrac - f) < 0.001;
@@ -269,7 +283,7 @@ export default function HeroOrrery({ booted, target }: { booted: boolean; target
               <button
                 key={item.h}
                 type="button"
-                className={`orrery__pill${active ? " is-active" : ""}${item.h === 1500 ? " is-crit" : item.h === 1497 ? " is-warn" : ""}`}
+                className={`orrery-plate__pill${active ? " is-active" : ""}${item.h === 1500 ? " is-crit" : item.h === 1497 ? " is-warn" : ""}`}
                 onClick={() => setManualFrac(active ? null : f)}
               >
                 {item.label}
@@ -277,8 +291,8 @@ export default function HeroOrrery({ booted, target }: { booted: boolean; target
             );
           })}
           {manualFrac !== null && (
-            <button type="button" className="orrery__pill orrery__pill--reset" onClick={() => setManualFrac(null)}>
-              SCROLL SYNC
+            <button type="button" className="orrery-plate__pill orrery-plate__pill--reset" onClick={() => setManualFrac(null)}>
+              SYNC
             </button>
           )}
         </div>
