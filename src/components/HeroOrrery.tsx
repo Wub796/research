@@ -178,24 +178,12 @@ export default function HeroOrrery({ booted, target }: { booted: boolean; target
     <div className="orrery-plate" data-booted={booted}>
       {/* Plate Header */}
       <div className="orrery-plate__head">
-        <div className="orrery-plate__head-left">
-          <span className="orrery-plate__badge">PLATE 01</span>
-          <span className="orrery-plate__title">J2000 HELIOCENTRIC ORBITAL PLANE</span>
-        </div>
-        <div className="orrery-plate__head-right">
-          <span>SCALE · 1 AU = 196U</span>
-        </div>
+        <span className="orrery-plate__title">J2000 HELIOCENTRIC ORBITAL PLANE</span>
+        <span className="orrery-plate__scale">1 AU = 196U</span>
       </div>
 
-      {/* Plate Canvas Area with Corner Fiducials */}
+      {/* Plate Canvas Area */}
       <div className="orrery-plate__canvas-wrap">
-        <div className="orrery__fiducials" aria-hidden="true">
-          <span className="orrery__fid orrery__fid--tl">γ 0° EQUINOX</span>
-          <span className="orrery__fid orrery__fid--tr">DWG · ARES-1</span>
-          <span className="orrery__fid orrery__fid--bl">SOL-CENTERED</span>
-          <span className="orrery__fid orrery__fid--br">EPOCH · 2027</span>
-        </div>
-
         <motion.div className="orrery__plane" style={{ transform }} aria-hidden="true">
           <svg className="orrery__svg" viewBox="-430 -430 860 860">
             {/* Reference heliocentric AU rings */}

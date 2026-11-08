@@ -506,13 +506,9 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
         <div className="research-nav__brand">
           <span className="research-nav__dot" aria-hidden="true" />
           <strong>ARES-1</strong>
-          <span className="research-nav__status" aria-hidden="true">
-            <span className="nav-pulse-dot" /> LIVE TELEMETRY
-          </span>
-          <span className="research-nav__doc">TM-2026-001 · AUTONOMOUS FAULT-TOLERANT NEURAL GUIDANCE</span>
+          <span className="research-nav__doc">TM-2026-001 · AUTONOMOUS NEURAL GUIDANCE</span>
         </div>
         <nav className="research-nav__links">
-          <button type="button" onClick={() => scrollToSection('section-orbit')}>00 ORBIT</button>
           <button type="button" onClick={() => scrollToSection('section-brief')}>01 BRIEF</button>
           <button type="button" onClick={() => scrollToSection('section-signal')}>02 SIGNAL</button>
           <button type="button" onClick={() => scrollToSection('section-filmstrip')}>03 FILMSTRIP</button>
@@ -523,11 +519,8 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
 
       <section className="research-hero" id="section-orbit" ref={heroRef}>
         <motion.div className="research-topline" {...enter(0, -14, 0)}>
-          <span>
-            <span className="topline-tag">● TRL-6 DEMO</span>
-            <DecodeText text="ARES-1 / FIELD NOTE 001 · J2000 ECLIPTIC TRANSFER" active={booted} />
-          </span>
-          <span><DecodeText text="EARTH → MARS · 2027-02-19 TO 2028-05-24 UTC" active={booted} delay={120} /></span>
+          <span><DecodeText text="ARES-1 // FIELD NOTE 001 · J2000 HELIOCENTRIC TRANSFER" active={booted} /></span>
+          <span><DecodeText text="EARTH → MARS · 2027–2028 UTC" active={booted} delay={120} /></span>
         </motion.div>
 
         <div className="research-hero-split">
@@ -545,39 +538,9 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
                   ENTER ARES-1 CONSOLE <span className="research-launch-arrow">↘</span>
                 </button>
               </Magnetic>
-              <Magnetic>
-                <button type="button" className="research-secondary-btn" onClick={() => scrollToSection('section-signal')}>
-                  INSPECT ISP SIGNAL ↓
-                </button>
-              </Magnetic>
-            </motion.div>
-
-            {/* Structured Swiss Specification Ledger */}
-            <motion.div className="research-hero-ledger" {...enter(0.62, 16, 0)}>
-              <div className="hero-ledger-row">
-                <span className="hero-ledger-k">CRUISE DURATION</span>
-                <span className="hero-ledger-v">11,040 H · 460 DAYS</span>
-              </div>
-              <div className="hero-ledger-row">
-                <span className="hero-ledger-k">TRANSFER ARC</span>
-                <span className="hero-ledger-v">948M KM FLOWN</span>
-              </div>
-              <div className="hero-ledger-row">
-                <span className="hero-ledger-k">ERROR REDUCTION</span>
-                <span className="hero-ledger-v is-accent">−55.8% (5.87M → 2.60M KM)</span>
-              </div>
-              <div className="hero-ledger-row">
-                <span className="hero-ledger-k">INFERENCE MARGIN</span>
-                <span className="hero-ledger-v">1.94 µs (&gt;99.99999%)</span>
-              </div>
-              <div className="hero-ledger-row">
-                <span className="hero-ledger-k">COLLECTIVE DETECTOR</span>
-                <span className="hero-ledger-v">F₁ = 0.990 · 0 FALSE ALARMS</span>
-              </div>
-              <div className="hero-ledger-row">
-                <span className="hero-ledger-k">HALL PROPULSION</span>
-                <span className="hero-ledger-v">SPT-140 · 4.5 KW XE</span>
-              </div>
+              <button type="button" className="research-hero-link" onClick={() => scrollToSection('section-brief')}>
+                INSPECT MISSION BRIEF ↓
+              </button>
             </motion.div>
           </motion.div>
 
@@ -592,22 +555,10 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
         </div>
 
         <motion.div className="research-hero-facts" {...enter(0.7, 12, 0)} aria-label="Mission at a glance">
-          <div className="hero-fact-cell">
-            <b>OPERATIONAL DRIFT</b>
-            <span>3–14D NASA DSN DELAY</span>
-          </div>
-          <div className="hero-fact-cell">
-            <b>ONBOARD CLOSURE</b>
-            <span>1.94 µS / 1.90 KB POLICY</span>
-          </div>
-          <div className="hero-fact-cell">
-            <b>ANOMALY FILTER</b>
-            <span>F₁ = 0.990 (0 FALSE ALARMS)</span>
-          </div>
-          <div className="hero-fact-cell">
-            <b>PROPULSION</b>
-            <span>SPT-140 HALL (279.9 MN)</span>
-          </div>
+          <span><b>DRIFT</b> 3–14D NASA DSN DELAY</span>
+          <span><b>CLOSURE</b> 1.94 µS / 1.90 KB POLICY</span>
+          <span><b>FILTER</b> F₁ = 0.990 · 0 FALSE ALARMS</span>
+          <span><b>ENGINE</b> SPT-140 HALL (279.9 MN)</span>
         </motion.div>
       </section>
 
