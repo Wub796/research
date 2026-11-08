@@ -506,6 +506,9 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
         <div className="research-nav__brand">
           <span className="research-nav__dot" aria-hidden="true" />
           <strong>ARES-1</strong>
+          <span className="research-nav__status" aria-hidden="true">
+            <span className="nav-pulse-dot" /> LIVE TELEMETRY
+          </span>
           <span className="research-nav__doc">TM-2026-001 · AUTONOMOUS FAULT-TOLERANT NEURAL GUIDANCE</span>
         </div>
         <nav className="research-nav__links">
@@ -520,7 +523,10 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
 
       <section className="research-hero" id="section-orbit" ref={heroRef}>
         <motion.div className="research-topline" {...enter(0, -14, 0)}>
-          <span><DecodeText text="ARES-1 / FIELD NOTE 001 · J2000 ECLIPTIC TRANSFER" active={booted} /></span>
+          <span>
+            <span className="topline-tag">● TRL-6 DEMO</span>
+            <DecodeText text="ARES-1 / FIELD NOTE 001 · J2000 ECLIPTIC TRANSFER" active={booted} />
+          </span>
           <span><DecodeText text="EARTH → MARS · 2027-02-19 TO 2028-05-24 UTC" active={booted} delay={120} /></span>
         </motion.div>
 
@@ -586,10 +592,22 @@ function ResearchLanding({ cesiumReady, booted, onInstrumentReady, onStage }: { 
         </div>
 
         <motion.div className="research-hero-facts" {...enter(0.7, 12, 0)} aria-label="Mission at a glance">
-          <span><b>OPERATIONAL DRIFT:</b> 3–14D NASA DSN DELAY</span>
-          <span><b>ONBOARD CLOSURE:</b> 1.94 µS / 1.90 KB POLICY</span>
-          <span><b>ANOMALY FILTER:</b> F₁ = 0.990 (0 FALSE ALARMS)</span>
-          <span><b>PROPULSION:</b> SPT-140 HALL (279.9 MN)</span>
+          <div className="hero-fact-cell">
+            <b>OPERATIONAL DRIFT</b>
+            <span>3–14D NASA DSN DELAY</span>
+          </div>
+          <div className="hero-fact-cell">
+            <b>ONBOARD CLOSURE</b>
+            <span>1.94 µS / 1.90 KB POLICY</span>
+          </div>
+          <div className="hero-fact-cell">
+            <b>ANOMALY FILTER</b>
+            <span>F₁ = 0.990 (0 FALSE ALARMS)</span>
+          </div>
+          <div className="hero-fact-cell">
+            <b>PROPULSION</b>
+            <span>SPT-140 HALL (279.9 MN)</span>
+          </div>
         </motion.div>
       </section>
 
