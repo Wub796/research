@@ -25,19 +25,34 @@ const FOCI: { key: FocusKey; label: string }[] = [
 
 const FIGURES = [
   {
-    src: "/figures/3d_heliocentric_trajectory.png",
-    title: "Heliocentric transfer",
-    caption: "Mean ecliptic J2000, heliocentric: Earth (a = 1.00 AU) and Mars (a = 1.52 AU) orbits with the ARES-1 transfer, propagated under solar gravity and the engine's commanded thrust.",
+    src: "/figures/thruster_degradation_fit.png",
+    title: "Thruster wear calibration",
+    caption: "Logarithmic erosion fit against Kamhawi et al. (2014) SPT-140 life-test wear data. Thrust output achieves R² = 0.9966 (k = 4.465 mN, τ = 1,233.9 h) and specific impulse achieves R² = 0.9996 (k = 31.39 s, τ = 4,141.6 h), establishing an empirical ground truth for residual anomaly filtering.",
   },
   {
-    src: "/figures/isp_degradation_anomaly_detection.png",
-    title: "Isp decay & anomaly flag",
-    caption: "Specific impulse holds 1,782 s until hour 1,000, then decays logarithmically. The Isolation Forest flags at hour 1,497 (Isp ≈ 1,514.96 s), three hours before the 1,514.7 s lock.",
+    src: "/figures/anomaly_detection_analysis.png",
+    title: "Collective anomaly benchmark",
+    caption: "Onboard anomaly detection across N = 100 missions (50 degraded, 50 nominal). Point-only monitoring (w = 1 h) fails on 62% of degrading thrusters (F₁ = 0.543) due to sensor & thermal noise overlap. Incorporating 24 h rolling residuals and secant slope features yields F₁ = 0.990 (precision 1.000, recall 0.980, 0 false alarms). Physics-informed Rolling Z-Score achieves F₁ = 0.959 with 13.74 h mean detection delay.",
   },
   {
-    src: "/figures/thrust_magnitude_propellant.png",
-    title: "Thrust & propellant",
-    caption: "Commanded thrust (≤ 0.289 N) against remaining propellant over the 11,040 h transfer. Mass flow follows the Isp schedule, so the post-lock engine spends more xenon per newton.",
+    src: "/figures/training_curves.png",
+    title: "Two-stage curriculum dynamics",
+    caption: "Optimization dynamics of the 243-parameter neural pilot (11 → 16 → 3 tanh). Stage 1 (0–400 gen) optimizes nominal transfer from 31.8M km to 1.30M km miss (399.1 kg Xe). Stage 2 (400–600 gen) adapts to 10%–25% progressive wear, recovering from 6.44M km to 1.11M km miss and achieving 20% validation capture rate.",
+  },
+  {
+    src: "/figures/gap_experiment_comparison.png",
+    title: "Research gap & factorial study",
+    caption: "Controlled comparison across N = 100 scenarios (Creswell 2012) and 3×4 factorial experiment (Leedy & Ormrod 2015). Onboard autonomy cuts median miss from 5.87M km (pre-planned open-loop) to 2.60M km (55.8% error reduction). Trajectory error prevented scales monotonically from 2.45M km (10% wear) to 4.13M km (25% wear), outperforming 7-day DSN ground intervention.",
+  },
+  {
+    src: "/figures/monte_carlo_dispersion.png",
+    title: "Monte Carlo dispersion",
+    caption: "Ensemble of N = 100 dispersed transfers under 5-D Zavoli-Federici disturbances (launch position/velocity dispersion, nav noise, thrust dispersion, safe-mode outages, progressive wear). Delivers 5.19M ± 1.81M km (0.035 AU) proximity consuming 443.15 ± 9.36 kg Xe, safely within the 1,099 kg usable tank capacity.",
+  },
+  {
+    src: "/figures/onboard_latency_distribution.png",
+    title: "Flight computer latency & RAM",
+    caption: "Single-core flight processor execution profiling across 10,000 evaluations. The 243-parameter neural policy requires only 1,944 bytes (1.90 KB) RAM, fitting comfortably in L1 cache, with a mean inference latency of 1.94 µs (P99 = 2.42 µs, worst-case 21.67 µs). This yields a real-time flight margin > 99.99999% against the 12 h (43,200 s) guidance step budget.",
   },
 ];
 
@@ -385,7 +400,9 @@ export default function Globe({ onReady, onStage }: { onReady?: () => void; onSt
   const [attempt, setAttempt] = useState(0);
   const [focus, setFocusState] = useState<FocusKey>("sun");
   const [tab, setTab] = useState<"log" | "figures">("log");
-  const [figure, setFigure] = useState<{ index: number; closing: boolean } | null>(null);
+  const [figureIdx, setFigureIdx] = useState<number | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const downTargetRef = useRef<EventTarget | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [engaged, setEngaged] = useState(false);
   const [entered, setEntered] = useState(false);
@@ -525,20 +542,18 @@ export default function Globe({ onReady, onStage }: { onReady?: () => void; onSt
         clock.seek(Math.round(clock.hour + (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 24 : 1)));
       } else if (["1", "2", "3", "4"].includes(e.key)) {
         setFocus(FOCI[Number(e.key) - 1].key);
-      } else if (e.key === "Escape" && figure) {
-        setFigure((f) => (f ? { ...f, closing: true } : f));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clock, engaged, figure, setFocus]);
+  }, [clock, engaged, setFocus]);
 
-  // figure modal exit
   useEffect(() => {
-    if (!figure?.closing) return;
-    const t = window.setTimeout(() => setFigure(null), 200);
-    return () => window.clearTimeout(t);
-  }, [figure]);
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    if (figureIdx !== null && !dlg.open) dlg.showModal();
+    else if (figureIdx === null && dlg.open) dlg.close();
+  }, [figureIdx]);
 
   const log = useMemo(() => (mission ? buildLog(mission) : []), [mission]);
   const sparks = useMemo(() => (mission ? sparkSeries(mission) : null), [mission]);
@@ -729,7 +744,7 @@ export default function Globe({ onReady, onStage }: { onReady?: () => void; onSt
           ) : (
             <div className="ac-figs" data-lenis-prevent>
               {FIGURES.map((fig, i) => (
-                <button key={fig.src} type="button" className="ac-fig" onClick={() => setFigure({ index: i, closing: false })}>
+                <button key={fig.src} type="button" className="ac-fig" onClick={() => setFigureIdx(i)}>
                   <img src={pub(fig.src)} alt="" loading="lazy" />
                   <span className="ac-fig__title">
                     FIG. {String(i + 1).padStart(2, "0")} · {fig.title.toUpperCase()}
@@ -802,22 +817,42 @@ export default function Globe({ onReady, onStage }: { onReady?: () => void; onSt
         )}
       </footer>
 
-      {figure && (
-        <div className="ac-modal" data-closing={figure.closing} onClick={() => setFigure((f) => (f ? { ...f, closing: true } : f))}>
-          <div className="ac-modal__card" role="dialog" aria-modal="true" aria-label={FIGURES[figure.index].title} onClick={(e) => e.stopPropagation()}>
+      <dialog
+        ref={dialogRef}
+        className="ac-modal"
+        {...({ closedby: "any" } as Record<string, string>)}
+        aria-label={figureIdx !== null ? FIGURES[figureIdx].title : "Figure viewer"}
+        onClose={() => setFigureIdx(null)}
+        onPointerDown={(e) => {
+          downTargetRef.current = e.target;
+        }}
+        onPointerUp={(e) => {
+          if (
+            typeof HTMLDialogElement !== "undefined" &&
+            !("closedBy" in HTMLDialogElement.prototype) &&
+            e.target === dialogRef.current &&
+            downTargetRef.current === dialogRef.current
+          ) {
+            dialogRef.current.close();
+          }
+          downTargetRef.current = null;
+        }}
+      >
+        {figureIdx !== null && (
+          <div className="ac-modal__card">
             <div className="ac-modal__head">
               <span>
-                FIG. {String(figure.index + 1).padStart(2, "0")} · {FIGURES[figure.index].title.toUpperCase()}
+                FIG. {String(figureIdx + 1).padStart(2, "0")} · {FIGURES[figureIdx].title.toUpperCase()}
               </span>
-              <button type="button" className="ac-btn ac-btn--ghost" autoFocus onClick={() => setFigure((f) => (f ? { ...f, closing: true } : f))}>
+              <button type="button" className="ac-btn ac-btn--ghost" autoFocus onClick={() => dialogRef.current?.close()}>
                 CLOSE
               </button>
             </div>
-            <img src={pub(FIGURES[figure.index].src)} alt={FIGURES[figure.index].title} />
-            <p>{FIGURES[figure.index].caption}</p>
+            <img src={pub(FIGURES[figureIdx].src)} alt={FIGURES[figureIdx].title} />
+            <p>{FIGURES[figureIdx].caption}</p>
           </div>
-        </div>
-      )}
+        )}
+      </dialog>
 
       <audio ref={audioRef} src={pub("/audio/theme.mp3")} loop preload="none" playsInline muted />
     </div>

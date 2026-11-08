@@ -1,21 +1,47 @@
-# ARES-1 — Heliocentric Trajectory Visualizer / PPO Guidance Console
+# ARES-1 — Autonomous Fault-Tolerant Neural Guidance Console
 
-A scroll-led research visualization of an autonomous guidance experiment: a PPO
-(reinforcement learning) controller pilots a low-thrust spacecraft from Earth
-to Mars while its engine quietly degrades in flight. An Isolation Forest
-watches telemetry for the first sign of the unseen failure — and the site's
-live instrument lets you scrub through every decision the controller makes
-after that point.
+A scroll-led research visualization and interactive astrodynamics console for
+autonomous spacecraft trajectory optimization under progressive thruster
+degradation: coupling a 24-hour collective-window anomaly detector with a
+compact 243-parameter neural guidance pilot to eliminate reliance on
+3-to-14-day deep-space ground communications delays.
 
 Live at **https://Wub796.github.io/research/**
 
-## The mission, in numbers
+## Key Research Findings (AP Research 2026)
 
-- **11,040 hours** — duration of the heliocentric transfer
-- **1,000 h** — thruster specific-impulse decay begins
-- **1,497 h** — the Isolation Forest flags an anomalous engine signature
-- **1,500 h** — hardware failure locks specific impulse at **1,514.7 s**
-- **1,514.7 s** — the degraded Isp the PPO policy must keep flying with
+- **55.8% Terminal Error Reduction:** Across $N = 100$ dispersed degradation scenarios
+  (Creswell 2012), autonomous onboard adaptation cuts median terminal miss distance
+  from **$5,870,100\text{ km}$** (pre-planned open loop) to **$2,596,298\text{ km}$**.
+- **Monotonic Scalability (Factorial Study):** In a $3 \times 4$ two-way factorial
+  experiment (Leedy & Ormrod 2015), error prevented by onboard AI increases from
+  **$2.45\text{M km}$** ($10\%$ wear) to **$4.13\text{M km}$** ($25\%$ wear). At
+  $20\%$ and $25\%$ wear, onboard autonomy outperforms 7-day DSN ground recovery.
+- **Collective Anomaly Detection ($F_1 = 0.990$):** Point-only monitoring ($w = 1\text{ h}$)
+  fails on $62\%$ of degrading thrusters ($F_1 = 0.543$) due to sensor and thermal noise.
+  A 24-hour collective window with secant-slope features achieves **$1.000$ precision**,
+  **$0.980$ recall**, and **zero false alarms** ($49/50$ detected). Physics-informed
+  rolling Z-score achieves $F_1 = 0.959$ with **$13.74\text{ h}$** mean detection delay.
+- **Empirical Wear Calibration:** SPT-140 Hall thruster ($4.5\text{ kW}$) logarithmic erosion
+  fit against Kamhawi et al. (2014) life-test data achieves $R^2 = \mathbf{0.9966}$ on
+  thrust output ($k = 4.465\text{ mN}, \tau = 1,233.9\text{ h}$) and $R^2 = \mathbf{0.9996}$
+  on specific impulse ($k = 31.39\text{ s}, \tau = 4,141.6\text{ h}$).
+- **Flight Computer Profiling:** The 243-parameter neural pilot ($11 \to 16 \to 3\ \tanh$)
+  occupies only **$1,944\text{ bytes}$ ($1.90\text{ KB}$)** RAM and executes in
+  **$1.94\ \mu\text{s}$ mean latency** ($P_{99} = 2.42\ \mu\text{s}$), providing
+  **$>99.99999\%$ real-time flight margin** against the 12-hour guidance step budget.
+- **Monte Carlo Robustness ($N = 100$):** Under simultaneous 5-D Zavoli-Federici disturbances
+  (launch dispersion, nav noise, thrust dispersion, safe-mode outages, wear), achieves
+  $5.19\text{M} \pm 1.81\text{M km}$ proximity using $443.15 \pm 9.36\text{ kg}$ Xenon
+  (well within the $1,099\text{ kg}$ tank capacity).
+
+## The Reference Flight Scenario, in Numbers
+
+- **11,040 hours** (460 days) — duration of the single physical reference transfer
+- **1,000 h** — thruster specific-impulse decay initiates
+- **1,497 h** — the collective Isolation Forest flags anomalous engine signature
+- **1,500 h** — hardware failure locks specific impulse at **1,514.7 s** (−15.0% efficiency)
+- **1,514.7 s** — the degraded Isp the closed-loop neural pilot adapts through to Mars intercept
 
 ## The experience
 

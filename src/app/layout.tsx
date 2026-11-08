@@ -3,8 +3,8 @@ import "./globals.css";
 import CursorReticle from "../components/CursorReticle";
 
 export const metadata: Metadata = {
-  title: "ARES-1 Heliocentric Trajectory Visualizer | PPO Guidance Console",
-  description: "Autonomous spacecraft guidance simulation using Proximal Policy Optimization (PPO) under thruster specific impulse degradation.",
+  title: "ARES-1 · Autonomous Fault-Tolerant Neural Guidance Console",
+  description: "Interactive heliocentric astrodynamics showcase and technical specification for autonomous deep-space trajectory optimization under progressive thruster degradation using collective anomaly detection and closed-loop neural guidance.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
